@@ -1,0 +1,27 @@
+{
+  "name": "app-retro-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node app/server.js",
+    "postinstall": "node scripts/sync-emulator-assets.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "5.1.0",
+    "helmet": "8.1.0",
+    "multer": "2.5.0"
+  },
+  "devDependencies": {
+    "@emulatorjs/core-fbneo": "4.2.3",
+    "@emulatorjs/core-fceumm": "4.2.3",
+    "@emulatorjs/core-gambatte": "4.2.3",
+    "@emulatorjs/core-mgba": "4.2.3",
+    "@emulatorjs/core-mupen64plus_next": "4.2.3",
+    "@emulatorjs/core-snes9x": "4.2.3",
+    "@emulatorjs/emulatorjs": "4.2.3",
+    "clean-css": "5.3.3",
+    "terser": "5.51.4"
+  }
+}

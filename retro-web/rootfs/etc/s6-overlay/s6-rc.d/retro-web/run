@@ -1,0 +1,3 @@
+#!/command/with-contenv bashio
+cd /opt/retro-web || exit 1
+exec node app/server.js
