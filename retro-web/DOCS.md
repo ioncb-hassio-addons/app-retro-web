@@ -1,25 +1,99 @@
-# Retro Web
+# Home Assistant Community App: Retro Web
 
 Retro Web provides a private browser-based library for legally acquired retro
-games. The app is intentionally self-hosted: ROMs, BIOS files, metadata,
+games. The app is intentionally self-hosted: ROMs, BIOS files, covers,
 profiles, and saves remain under `/data`.
 
-## Requirements and legal use
+## Installation
 
-You are responsible for the legality of every ROM and BIOS file you upload.
-Retro Web does not include, search, or distribute game media.
+The installation of this app is pretty straightforward and not different in
+comparison to installing any other Home Assistant app.
 
-Emulator compatibility varies by game and core. Nintendo 64 and Arcade titles
-may require additional memory, CPU, or BIOS files.
+1. Add the IonCB Apps repository to Home Assistant.
+1. Search for the "Retro Web" app.
+1. Click the "Install" button to install the app.
+1. Start the "Retro Web" app.
+1. Open Retro Web from the Home Assistant sidebar.
+
+## Configuration
+
+External access and external administration are disabled by default.
+
+**Note**: _Remember to restart the app when the configuration is changed._
+
+Example app configuration:
+
+```yaml
+log_level: info
+external_access: false
+external_username: ""
+external_password: ""
+allow_external_rom_upload: false
+external_admin_password: ""
+session_timeout_hours: 12
+max_upload_mb: 4096
+profile_limit: 8
+enable_arcade: true
+```
+
+### Option: `log_level`
+
+Controls the level of log output. Possible values are:
+
+- `trace`: Show every detail.
+- `debug`: Show detailed debug information.
+- `info`: Show normal operational events.
+- `warning`: Show exceptional occurrences that are not errors.
+- `error`: Show runtime errors.
+- `fatal`: Show fatal errors that make the app unusable.
+
+The default and recommended level is `info`.
+
+### Option: `external_access`
+
+Enables the separate external web listener on port `8098`. The listener remains
+protected by `external_username` and `external_password`.
+
+### Options: `external_username` and `external_password`
+
+Credentials required by external users before selecting a profile. The app
+refuses to start with `external_access` enabled if either value is empty.
+
+### Option: `allow_external_rom_upload`
+
+Enables administration from the external listener. It is disabled by default
+and requires `external_admin_password`.
+
+### Option: `external_admin_password`
+
+Separate password used to elevate an authenticated external session into
+administrator mode.
+
+### Option: `session_timeout_hours`
+
+Sets the external session lifetime in hours. Accepted range: `1` to `168`.
+
+### Option: `max_upload_mb`
+
+Maximum ROM, BIOS, or cover upload size in megabytes. Accepted range: `16` to
+`16384`.
+
+### Option: `profile_limit`
+
+Maximum number of local player profiles. Accepted range: `1` to `20`.
+
+### Option: `enable_arcade`
+
+Enables uploading Arcade ROMs to FinalBurn Neo.
 
 ## First start
 
-1. Install Retro Web from the desired channel.
-2. Open **Retro Web** from the Home Assistant sidebar.
-3. Create one or more profiles.
-4. Open **Administrar** and upload a ROM.
-5. Select the matching platform.
-6. Return to the library and launch the game.
+1. Open **Retro Web** from the Home Assistant sidebar.
+2. Create one or more profiles.
+3. Open **Manage** and upload a ROM.
+4. Select the matching platform.
+5. Optionally upload or search for a cover.
+6. Return to the library and select the game.
 
 The app creates a default `Player 1` profile on first start.
 
@@ -39,45 +113,30 @@ ROM upload is available inside Home Assistant Ingress. Supported formats:
 ROM names are not used as filesystem paths. Retro Web identifies uploaded
 content by SHA-256 hash and stores an editable display title separately.
 
-Selecting a ROM automatically fills the title from its filename. Underscores,
-dots, and repeated spaces are normalized. The generated title remains editable;
-only the filename is used as fallback if the administrator clears the field.
+Selecting a ROM generates the title from its filename. The generated title
+remains editable before upload.
 
 ## Covers
 
-A cover can be selected from the local computer while uploading a ROM. The
-preview remains in the browser until the upload is confirmed. Retro Web accepts
-PNG, JPEG, and WebP covers and rejects SVG, malformed images, or images over
-the size and dimension limits.
+The administrator can upload a PNG, JPEG, or WebP cover and preview it before
+upload. Malformed, SVG, oversized, or excessive-dimension images are rejected.
 
-The administrator can also search public box art in the Libretro Thumbnails
-repositories. Searches are initiated manually, performed by the backend, and
-limited to supported platform repositories. Up to 12 candidates are shown.
-
-After a candidate is selected, Retro Web downloads and caches the image under
-`/data/covers`. Gameplay and future visits use this local copy and do not depend
-on the cover provider remaining online.
+Retro Web can also search public box art in Libretro Thumbnails. Searches run
+only when requested, and the selected image is copied into `/data/covers`.
+Future use is local and does not depend on the provider remaining online.
 
 ## Language
 
-The interface supports Spanish and English. The first language is detected from
-the browser. Selecting a language from the interface stores it in the active
-profile, allowing different players to use different languages.
+The interface supports Spanish and English. The initial language follows the
+browser, and the active profile stores later selections.
 
 ## BIOS upload
 
-BIOS files are managed separately from ROMs. Upload only BIOS files you are
-legally authorized to use.
+BIOS files are managed separately from ROMs. Only upload BIOS files that you
+are legally authorized to use.
 
-The current MVP supports optional BIOS files or bundles for:
-
-- Nintendo 64.
-- Arcade.
-
-Nintendo 64 games normally run without BIOS. A BIOS can be uploaded for optional
-features such as 64DD. Arcade ROM sets may require a matching BIOS bundle. The
-original filename and extension are preserved for EmulatorJS. For Arcade
-systems that require several BIOS files, upload a compatible ZIP bundle.
+Nintendo 64 games normally run without BIOS. An optional BIOS may support
+features such as 64DD. Arcade ROM sets may require a matching BIOS bundle.
 
 ## Profiles and saves
 
@@ -89,56 +148,82 @@ Each native save and save state belongs to:
 - Save type.
 - Slot.
 
-Profiles cannot read or replace another profile's save files. Every write is
-atomic, and the previous slot is retained as `.previous`.
+Profiles cannot read or replace another profile's files. Writes are atomic and
+the previous slot is retained as `.previous`.
 
-Saving requires the server request to complete. If a request fails, Retro Web
-shows an error and must not be treated as a successful save.
+Native saves come from the game's own save function and synchronize
+automatically. Save states use the selected slot and **Save State** button.
 
 ## External access
 
-External access is disabled by default. Enabling it:
+To enable external access:
 
 1. Set `external_access` to `true`.
 2. Configure `external_username` and `external_password`.
-3. Expose container port `8098` using the Home Assistant app network settings.
+3. Expose container port `8098`.
 4. Put the port behind an HTTPS reverse proxy.
 
-The external listener only exposes gameplay and profiles. Administrative
-routes return `404` while external upload is disabled.
-
-## Optional external administration
-
-External administration is also disabled by default.
-
-To enable it:
-
-1. Set `allow_external_rom_upload` to `true`.
-2. Configure `external_admin_password`.
-3. Sign in with the regular external username/password.
-4. Select **Administrar** and enter the separate admin password.
-
-The admin elevation remains limited to the session and expires with it. Set
-the admin password to a different value from `external_password`.
+The external listener exposes gameplay and profiles only. Administrative
+routes remain unavailable unless external administration is explicitly enabled.
 
 ## Backups
 
-Back up the app's complete `/data` directory. It contains:
+Back up the complete `/data` directory. It contains:
 
 - `app.db`.
-- ROMs.
-- BIOS files.
+- ROMs and BIOS files.
 - Cover images.
 - Profiles.
-- Native saves.
-- Save states.
+- Native saves and save states.
 
-Restore the directory while the app is stopped to prevent partial writes.
+Restore the directory while the app is stopped.
 
-## Troubleshooting
+## Changelog & Releases
 
-- A black screen can indicate an unsupported ROM/core or missing BIOS.
-- Save-state files only work with the same core version.
-- Do not use an HTTP-only external endpoint on an untrusted network.
-- Arcade ROM sets must match the selected FinalBurn Neo core.
-- Restart the app after changing options.
+This repository keeps a change log using [GitHub's releases][releases]
+functionality.
+
+Releases are based on [Semantic Versioning][semver] and use `MAJOR.MINOR.PATCH`.
+
+## Support
+
+Got questions?
+
+You could also [open an issue here][issue] on GitHub.
+
+## Authors & contributors
+
+The original setup of this repository is by [Jhon Coronel][jhoncb].
+
+For a full list of all authors and contributors,
+check [the contributor's page][contributors].
+
+## License
+
+MIT License
+
+Copyright (c) 2026 Jhon Coronel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+[contributors]: https://github.com/ioncb-hassio-addons/app-retro-web/graphs/contributors
+[issue]: https://github.com/ioncb-hassio-addons/app-retro-web/issues
+[jhoncb]: https://github.com/jhoncb
+[releases]: https://github.com/ioncb-hassio-addons/app-retro-web/releases
+[semver]: http://semver.org/spec/v2.0.0.html
