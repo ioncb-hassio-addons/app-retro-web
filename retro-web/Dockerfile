@@ -5,7 +5,10 @@ FROM ${BUILD_FROM} AS assets
 WORKDIR /build
 RUN apk add --no-cache \
     nodejs=24.22.3-r0 \
-    npm=11.12.1-r0
+    npm=11.12.1-r0 \
+    libcrypto3=3.5.9-r1 \
+    libssl3=3.5.9-r1 \
+    openssl=3.5.9-r1
 COPY package.json package-lock.json ./
 COPY scripts ./scripts
 RUN npm ci --include=dev --omit=optional \
@@ -20,6 +23,9 @@ COPY package.json package-lock.json ./
 RUN apk add --no-cache \
     nodejs=24.22.3-r0 \
     npm=11.12.1-r0 \
+    libcrypto3=3.5.9-r1 \
+    libssl3=3.5.9-r1 \
+    openssl=3.5.9-r1 \
     && npm ci --omit=dev --omit=optional --ignore-scripts
 
 COPY app ./app

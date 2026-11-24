@@ -11,6 +11,11 @@ const defaults = {
   max_upload_mb: 4096,
   profile_limit: 8,
   enable_arcade: true,
+  ssl: false,
+  certfile: "fullchain.pem",
+  keyfile: "privkey.pem",
+  tls_self_signed_days: 365,
+  tls_self_signed_common_name: "",
 };
 
 export function loadConfig(optionsPath = "/data/options.json") {
@@ -30,6 +35,9 @@ export function loadConfig(optionsPath = "/data/options.json") {
   config.max_upload_mb = Number(config.max_upload_mb);
   config.profile_limit = Number(config.profile_limit);
   config.session_timeout_hours = Number(config.session_timeout_hours);
+  config.tls_self_signed_days = Number(
+    config.tls_self_signed_days,
+  );
 
   if (
     config.external_access &&
@@ -48,6 +56,15 @@ export function loadConfig(optionsPath = "/data/options.json") {
     throw new Error(
       "External ROM uploads cannot be enabled while external access is off",
     );
+  }
+
+  if (config.ssl && config.external_access) {
+    if (
+      typeof config.certfile !== "string" ||
+      typeof config.keyfile !== "string"
+    ) {
+      throw new Error("SSL certificate and key names are required");
+    }
   }
 
   return config;

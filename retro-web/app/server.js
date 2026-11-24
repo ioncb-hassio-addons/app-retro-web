@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -31,6 +32,7 @@ import {
   selectProfile,
 } from "./session.js";
 import { normalizeTitle } from "./titles.js";
+import { resolveTls } from "./tls.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicRoot = path.join(root, "public");
@@ -1308,7 +1310,12 @@ export function start() {
   let externalServer;
   if (config.external_access) {
     const externalApp = createRetroApp(config, db, "external");
-    externalServer = externalApp.listen(config.externalPort, "0.0.0.0");
+    const tls = resolveTls(config);
+    externalServer = tls
+      ? https
+          .createServer(tls, externalApp)
+          .listen(config.externalPort, "0.0.0.0")
+      : externalApp.listen(config.externalPort, "0.0.0.0");
   }
 
   const shutdown = () => {
