@@ -8,6 +8,7 @@ import { loadConfig } from "../app/config.js";
 import { ensureStorage } from "../app/storage.js";
 import { createRetroApp } from "../app/server.js";
 import { normalizeTitle, titleFromFilename } from "../app/titles.js";
+import { createHash } from "node:crypto";
 
 async function setup() {
   const dataPath = fs.mkdtempSync(path.join(os.tmpdir(), "retro-web-test-"));
@@ -22,7 +23,7 @@ async function setup() {
     allow_external_rom_upload: false,
     external_admin_password: "",
     session_timeout_hours: 1,
-    max_upload_mb: 16,
+    max_upload_mb: 4096,
     profile_limit: 8,
     enable_arcade: true,
   };
@@ -411,6 +412,114 @@ test("ROM titles are normalized and profile language is persisted", async () => 
         .get(profile.id).language,
       "en",
     );
+  } finally {
+    await fixture.ingress.close();
+    await fixture.external.close();
+    fixture.db.close();
+    fs.rmSync(fixture.dataPath, { recursive: true, force: true });
+  }
+});
+
+test("large save states can be synchronized in chunks", async () => {
+  const fixture = await setup();
+  try {
+    const profile = fixture.db
+      .prepare("SELECT id FROM profiles ORDER BY created_at LIMIT 1")
+      .get();
+    fixture.db
+      .prepare(
+        `INSERT INTO games
+         (id, title, platform, core, extension, rom_path, bios_system, size, hash, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+      )
+      .run(
+        "chunk-game",
+        "Chunk Game",
+        "nes",
+        "fceumm",
+        ".nes",
+        path.join(fixture.dataPath, "roms", "chunk.nes"),
+        1,
+        "chunk-rom-hash",
+        new Date().toISOString(),
+      );
+    const save = Buffer.alloc(17 * 1024 * 1024 + 123, 7);
+    const hash = createHash("sha256").update(save).digest("hex");
+    const chunks = Math.ceil(save.byteLength / (1024 * 1024));
+    const startResponse = await fetch(
+      `${fixture.ingress.base}/api/games/chunk-game/saves/state/1/chunked/start`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-profile-id": profile.id,
+        },
+        body: JSON.stringify({
+          totalSize: save.byteLength,
+          totalChunks: chunks,
+          hash,
+          ifMatchSaveHash: "none",
+          emulatorVersion: "4.2.3",
+          core: "fceumm",
+          romHash: "chunk-rom-hash",
+        }),
+      },
+    );
+    const start = await json(startResponse);
+    for (let index = 0; index < chunks; index += 1) {
+      const from = index * 1024 * 1024;
+      const chunk = save.subarray(
+        from,
+        Math.min(from + 1024 * 1024, save.byteLength),
+      );
+      const uploaded = await fetch(
+        `${fixture.ingress.base}/api/games/chunk-game/saves/state/1/chunked/${start.uploadId}/${index}`,
+        {
+          method: "PUT",
+          headers: {
+            "content-type": "application/octet-stream",
+            "x-profile-id": profile.id,
+          },
+          body: chunk,
+        },
+      );
+      assert.equal(uploaded.status, 204);
+    }
+    const finished = await fetch(
+      `${fixture.ingress.base}/api/games/chunk-game/saves/state/1/chunked/${start.uploadId}/finish`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-profile-id": profile.id,
+        },
+        body: "{}",
+      },
+    );
+    assert.equal(finished.status, 204);
+    const stored = fixture.db
+      .prepare(
+        "SELECT save_hash FROM saves WHERE profile_id = ? AND game_id = ?",
+      )
+      .get(profile.id, "chunk-game");
+    assert.equal(stored.save_hash, hash);
+    const metaResponse = await fetch(
+      `${fixture.ingress.base}/api/games/chunk-game/saves/state/1/meta`,
+      { headers: { "x-profile-id": profile.id } },
+    );
+    const meta = await json(metaResponse);
+    const downloadedChunks = [];
+    for (let index = 0; index < chunks; index += 1) {
+      const response = await fetch(
+        `${fixture.ingress.base}/api/games/chunk-game/saves/state/1/chunk/${index}`,
+        { headers: { "x-profile-id": profile.id } },
+      );
+      assert.equal(response.status, 200);
+      downloadedChunks.push(Buffer.from(await response.arrayBuffer()));
+    }
+    const downloaded = Buffer.concat(downloadedChunks);
+    assert.equal(downloaded.length, meta.size);
+    assert.equal(createHash("sha256").update(downloaded).digest("hex"), hash);
   } finally {
     await fixture.ingress.close();
     await fixture.external.close();

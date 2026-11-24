@@ -38,6 +38,8 @@ const emulatorManifest = loadEmulatorManifest();
 
 export function createRetroApp(config, db, mode) {
   const app = express();
+  app.locals.db = db;
+  app.locals.mode = mode;
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(
@@ -71,6 +73,18 @@ export function createRetroApp(config, db, mode) {
     dest: path.join(config.dataPath, "temp"),
     limits: { fileSize: config.max_upload_mb * 1024 * 1024 },
   });
+  const uploadSessions = new Map();
+  const uploadCleanupTimer = setInterval(
+    () => {
+      for (const [uploadId, session] of uploadSessions) {
+        if (Date.now() - session.createdAt > 60 * 60 * 1000) {
+          cleanupChunkedSession(uploadSessions, uploadId);
+        }
+      }
+    },
+    10 * 60 * 1000,
+  );
+  uploadCleanupTimer.unref();
 
   app.use((request, response, next) => {
     response.set("Cache-Control", "no-store");
@@ -496,6 +510,180 @@ export function createRetroApp(config, db, mode) {
       slot: save.slot,
     });
   });
+
+  app.get(
+    "/api/games/:gameId/saves/:kind/:slot/chunk/:index",
+    (request, response) => {
+      const profileId = activeProfileId(request, response, db, mode);
+      if (!profileId) return;
+      const save = getSave(
+        db,
+        profileId,
+        request.params.gameId,
+        request.params.kind,
+        Number(request.params.slot),
+      );
+      if (!save || !fs.existsSync(save.file_path)) {
+        response.status(404).json({ error: "Save not found" });
+        return;
+      }
+      const chunkSize = 1024 * 1024;
+      const index = Number(request.params.index);
+      const size = fs.statSync(save.file_path).size;
+      const totalChunks = Math.ceil(size / chunkSize);
+      if (!Number.isInteger(index) || index < 0 || index >= totalChunks) {
+        response.status(416).json({ error: "Invalid save chunk index" });
+        return;
+      }
+      const start = index * chunkSize;
+      const end = Math.min(start + chunkSize, size);
+      response.set("Content-Type", "application/octet-stream");
+      response.set("X-Save-Total-Chunks", String(totalChunks));
+      response.set("X-Save-Total-Size", String(size));
+      response.send(fs.readFileSync(save.file_path).subarray(start, end));
+    },
+  );
+
+  app.post(
+    "/api/games/:gameId/saves/:kind/:slot/chunked/start",
+    (request, response) => {
+      if (
+        mode === "external" &&
+        !requireCsrf(request, getSession(db, request))
+      ) {
+        response.status(403).json({ error: "Invalid request token" });
+        return;
+      }
+      const session = validateChunkedSaveRequest(request, response, config);
+      if (!session) return;
+      const uploadId = crypto.randomUUID();
+      const directory = path.join(
+        config.dataPath,
+        "temp",
+        "save-uploads",
+        uploadId,
+      );
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+      uploadSessions.set(uploadId, {
+        ...session,
+        directory,
+        chunks: 0,
+        createdAt: Date.now(),
+      });
+      response.status(201).json({ uploadId });
+    },
+  );
+
+  app.put(
+    "/api/games/:gameId/saves/:kind/:slot/chunked/:uploadId/:index",
+    (request, response) => {
+      const session = uploadSessions.get(request.params.uploadId);
+      if (
+        mode === "external" &&
+        !requireCsrf(request, getSession(db, request))
+      ) {
+        response.status(403).json({ error: "Invalid request token" });
+        return;
+      }
+      const profileId = activeProfileId(request, response, db, mode);
+      if (
+        !session ||
+        session.profileId !== profileId ||
+        session.gameId !== request.params.gameId
+      ) {
+        if (!response.headersSent) {
+          response.status(404).json({ error: "Chunked save not found" });
+        }
+        return;
+      }
+      const index = Number(request.params.index);
+      if (
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index >= session.totalChunks ||
+        !Buffer.isBuffer(request.body) ||
+        request.body.length === 0 ||
+        request.body.length > 1024 * 1024
+      ) {
+        response.status(400).json({ error: "Invalid save chunk" });
+        return;
+      }
+      atomicWrite(
+        path.join(session.directory, String(index).padStart(6, "0")),
+        request.body,
+      );
+      session.chunks += 1;
+      response.status(204).end();
+    },
+  );
+
+  app.post(
+    "/api/games/:gameId/saves/:kind/:slot/chunked/:uploadId/finish",
+    (request, response) => {
+      const session = uploadSessions.get(request.params.uploadId);
+      if (
+        mode === "external" &&
+        !requireCsrf(request, getSession(db, request))
+      ) {
+        response.status(403).json({ error: "Invalid request token" });
+        return;
+      }
+      const profileId = activeProfileId(request, response, db, mode);
+      if (
+        !session ||
+        session.profileId !== profileId ||
+        session.gameId !== request.params.gameId
+      ) {
+        if (!response.headersSent) {
+          response.status(404).json({ error: "Chunked save not found" });
+        }
+        return;
+      }
+      const chunks = Array.from({ length: session.totalChunks }, (_, index) =>
+        path.join(session.directory, String(index).padStart(6, "0")),
+      );
+      if (chunks.some((chunk) => !fs.existsSync(chunk))) {
+        response
+          .status(409)
+          .json({ error: "One or more save chunks are missing" });
+        return;
+      }
+      const assembledPath = path.join(session.directory, "assembled.bin");
+      const output = fs.openSync(assembledPath, "w", 0o600);
+      try {
+        for (const chunk of chunks)
+          fs.writeSync(output, fs.readFileSync(chunk));
+      } finally {
+        fs.closeSync(output);
+      }
+      if (
+        fs.statSync(assembledPath).size !== session.totalSize ||
+        sha256File(assembledPath) !== session.expectedHash
+      ) {
+        cleanupChunkedSession(uploadSessions, request.params.uploadId);
+        response
+          .status(422)
+          .json({ error: "Assembled save hash or size is invalid" });
+        return;
+      }
+      try {
+        commitSaveUpload(
+          db,
+          session,
+          fs.readFileSync(assembledPath),
+          config.dataPath,
+        );
+      } catch (error) {
+        if (error.status) {
+          response.status(error.status).json({ error: error.message });
+          return;
+        }
+        throw error;
+      }
+      cleanupChunkedSession(uploadSessions, request.params.uploadId);
+      response.status(204).end();
+    },
+  );
 
   if (mode === "ingress") {
     mountAdminRoutes(app, config, db, upload);
@@ -953,6 +1141,145 @@ function markPlayed(db, profileId, gameId) {
      VALUES (?, ?, 0, ?)
      ON CONFLICT(profile_id, game_id) DO UPDATE SET last_played=excluded.last_played`,
   ).run(profileId, gameId, new Date().toISOString());
+}
+
+function validateChunkedSaveRequest(request, response, config) {
+  const profileId = activeProfileId(
+    request,
+    response,
+    request.app.locals.db,
+    request.app.locals.mode,
+  );
+  if (!profileId) return null;
+  const gameId = request.params.gameId;
+  const kind = request.params.kind;
+  const slot = Number(request.params.slot);
+  const totalSize = Number(request.body?.totalSize);
+  const totalChunks = Number(request.body?.totalChunks);
+  const expectedHash = String(request.body?.hash || "");
+  const ifMatch = String(request.body?.ifMatchSaveHash || "");
+  if (
+    !["state", "save"].includes(kind) ||
+    slot < 1 ||
+    slot > 9 ||
+    !Number.isInteger(totalChunks) ||
+    totalChunks < 1 ||
+    totalChunks > 16384 ||
+    !Number.isInteger(totalSize) ||
+    totalSize < 1 ||
+    totalSize > config.max_upload_mb * 1024 * 1024 ||
+    !/^[a-f0-9]{64}$/.test(expectedHash)
+  ) {
+    response.status(400).json({ error: "Invalid chunked save request" });
+    return null;
+  }
+  const game = getGame(request.app.locals.db, gameId);
+  if (!game) {
+    response.status(404).json({ error: "Game not found" });
+    return null;
+  }
+  return {
+    profileId,
+    gameId,
+    kind,
+    slot,
+    totalSize,
+    totalChunks,
+    expectedHash,
+    ifMatchSaveHash: ifMatch,
+    emulatorVersion: String(request.body?.emulatorVersion || ""),
+    core: String(request.body?.core || ""),
+    romHash: String(request.body?.romHash || ""),
+    game,
+  };
+}
+
+function commitSaveUpload(db, session, data, dataPath) {
+  const previous = getSave(
+    db,
+    session.profileId,
+    session.gameId,
+    session.kind,
+    session.slot,
+  );
+  const previousHash =
+    previous?.save_hash ||
+    (previous?.file_path && fs.existsSync(previous.file_path)
+      ? sha256File(previous.file_path)
+      : null);
+  if (
+    session.ifMatchSaveHash &&
+    session.ifMatchSaveHash !== "none" &&
+    previousHash !== session.ifMatchSaveHash
+  ) {
+    const error = new Error(
+      "The server save changed. Refresh and resolve the conflict.",
+    );
+    error.status = 412;
+    throw error;
+  }
+  if (session.ifMatchSaveHash === "none" && previous) {
+    const error = new Error(
+      "A server save now exists. Refresh and resolve the conflict.",
+    );
+    error.status = 412;
+    throw error;
+  }
+  if (
+    session.kind === "state" &&
+    (session.core !== session.game.core ||
+      session.romHash !== session.game.hash ||
+      !session.emulatorVersion)
+  ) {
+    const error = new Error("Save state compatibility metadata is invalid");
+    error.status = 409;
+    throw error;
+  }
+  const targetPath = savePath(
+    dataPath,
+    session.profileId,
+    session.gameId,
+    session.kind,
+    session.slot,
+  );
+  if (fs.existsSync(targetPath)) {
+    fs.copyFileSync(targetPath, `${targetPath}.previous`);
+  }
+  atomicWrite(targetPath, data);
+  db.prepare(
+    `INSERT INTO saves (
+       profile_id, game_id, core, kind, slot, file_path,
+       emulator_version, core_version, rom_hash, save_hash, updated_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(profile_id, game_id, core, kind, slot)
+     DO UPDATE SET
+       file_path=excluded.file_path,
+       emulator_version=excluded.emulator_version,
+       core_version=excluded.core_version,
+       rom_hash=excluded.rom_hash,
+       save_hash=excluded.save_hash,
+       updated_at=excluded.updated_at`,
+  ).run(
+    session.profileId,
+    session.gameId,
+    session.game.core,
+    session.kind,
+    session.slot,
+    targetPath,
+    session.kind === "state" ? session.emulatorVersion : null,
+    session.kind === "state" ? session.core : null,
+    session.kind === "state" ? session.romHash : null,
+    session.expectedHash,
+    new Date().toISOString(),
+  );
+  markPlayed(db, session.profileId, session.gameId);
+}
+
+function cleanupChunkedSession(sessions, uploadId) {
+  const session = sessions.get(uploadId);
+  if (session) fs.rmSync(session.directory, { recursive: true, force: true });
+  sessions.delete(uploadId);
 }
 
 function loadEmulatorManifest() {

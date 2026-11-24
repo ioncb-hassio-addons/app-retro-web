@@ -90,6 +90,7 @@ async function boot() {
       renderLogin();
       return;
     }
+    if (await restorePendingLocalState()) return;
     renderProfiles();
   } catch (error) {
     const localContext = await getRememberedProfileContext().catch(() => null);
@@ -628,7 +629,7 @@ async function uploadBios(event) {
   }
 }
 
-async function launchGame(gameId) {
+async function launchGame(gameId, restoreState = null) {
   try {
     let game;
     try {
@@ -671,7 +672,7 @@ async function launchGame(gameId) {
     document
       .querySelector("#local-storage")
       .addEventListener("click", manageLocalStorage);
-    await startEmulator(game);
+    await startEmulator(game, restoreState);
   } catch (error) {
     toast(error.message, true);
   }
@@ -683,7 +684,7 @@ let suppressNativeSaveUpload = false;
 const runtimeBlobUrls = new Set();
 const coverBlobUrls = new Set();
 
-async function startEmulator(game) {
+async function startEmulator(game, restoreState = null) {
   await releaseRuntimeBlobUrls();
   currentGameId = game.id;
   const romUrl = await resolveCachedAsset(
@@ -713,6 +714,8 @@ async function startEmulator(game) {
   window.EJS_gameID = `${state.profileId}-${game.id}-${game.core}`;
   window.EJS_gameUrl = romUrl;
   window.EJS_biosUrl = biosUrl;
+  window.EJS_loadStateURL = restoreState?.url || undefined;
+  window.EJS_startOnLoaded = Boolean(restoreState?.url);
   window.EJS_pathtodata = new URL(
     "./vendor/emulatorjs/data/",
     location.href,
@@ -729,6 +732,12 @@ async function startEmulator(game) {
   window.EJS_onLoadSave = loadNativeSave;
   window.EJS_onGameStart = () => {
     void loadNativeSave();
+    if (restoreState) {
+      setTimeout(() => {
+        URL.revokeObjectURL(restoreState.url);
+        toast(t("stateLoaded"));
+      }, 1000);
+    }
   };
   window.EJS_ready = () => {
     const emulator = window.EJS_emulator;
@@ -768,28 +777,75 @@ async function uploadSaveState({ state: save }) {
 
 async function loadSaveState() {
   try {
-    const game = window.EJS_currentGame;
     const local = await getLocalSave(
       state.profileId,
       currentGameId,
       "state",
       selectedSlot(),
     );
-    const compatibleLocal = compatibleLocalSave(local, game);
-    let buffer;
-    if (compatibleLocal) {
-      buffer = await local.blob.arrayBuffer();
+    const compatibleLocal = compatibleLocalSave(local, window.EJS_currentGame);
+    if (!compatibleLocal) {
+      const buffer = await fetchServerSave(
+        "state",
+        selectedSlot(),
+        window.EJS_currentGame,
+      );
+      sessionStorage.setItem(
+        "retro-web-pending-state",
+        JSON.stringify({
+          gameId: currentGameId,
+          slot: selectedSlot(),
+          source: "server",
+        }),
+      );
+      await putLocalSave(
+        state.profileId,
+        window.EJS_currentGame,
+        "state",
+        selectedSlot(),
+        buffer,
+      );
     } else {
-      buffer = await fetchServerSave("state", selectedSlot(), game);
+      sessionStorage.setItem(
+        "retro-web-pending-state",
+        JSON.stringify({
+          gameId: currentGameId,
+          slot: selectedSlot(),
+          source: "local",
+        }),
+      );
     }
-    if (!window.EJS_emulator?.gameManager) {
-      throw new Error("The emulator is not ready to restore a save state");
-    }
-    window.EJS_emulator.gameManager.loadState(new Uint8Array(buffer));
-    toast(t("stateLoaded"));
+    location.reload();
   } catch (error) {
     toast(error.message, true);
   }
+}
+
+async function restorePendingLocalState() {
+  const pendingValue = sessionStorage.getItem("retro-web-pending-state");
+  if (!pendingValue || !state.profileId) return false;
+  let pending;
+  try {
+    pending = JSON.parse(pendingValue);
+  } catch {
+    sessionStorage.removeItem("retro-web-pending-state");
+    return false;
+  }
+  const save = await getLocalSave(
+    state.profileId,
+    pending.gameId,
+    "state",
+    pending.slot,
+  );
+  if (!save?.blob) {
+    sessionStorage.removeItem("retro-web-pending-state");
+    return false;
+  }
+  sessionStorage.removeItem("retro-web-pending-state");
+  await launchGame(pending.gameId, {
+    url: URL.createObjectURL(save.blob),
+  });
+  return true;
 }
 
 async function uploadNativeSave({ save }) {
@@ -801,9 +857,22 @@ async function fetchServerSave(kind, slot, game) {
     kind === "state" ? stateHeaders(game) : { "x-profile-id": state.profileId };
   setPlayerBusy(true, t("syncingFromServer"));
   try {
-    return await api(`./api/games/${currentGameId}/saves/${kind}/${slot}`, {
-      headers,
-    });
+    const meta = await api(
+      `./api/games/${currentGameId}/saves/${kind}/${slot}/meta`,
+      { headers },
+    );
+    const chunkSize = 1024 * 1024;
+    const totalChunks = Math.ceil(meta.size / chunkSize);
+    const chunks = [];
+    for (let index = 0; index < totalChunks; index += 1) {
+      chunks.push(
+        await api(
+          `./api/games/${currentGameId}/saves/${kind}/${slot}/chunk/${index}`,
+          { headers },
+        ),
+      );
+    }
+    return new Blob(chunks).arrayBuffer();
   } finally {
     setPlayerBusy(false);
   }
@@ -916,6 +985,7 @@ async function saveLocally(kind, save) {
 async function syncCurrentSaves() {
   const button = document.querySelector("#sync-saves");
   if (button) button.disabled = true;
+  setPlayerBusy(true, t("syncingSaves"));
   try {
     const localSaves = await listLocalSaves(state.profileId, currentGameId);
     if (!localSaves.length) {
@@ -932,6 +1002,7 @@ async function syncCurrentSaves() {
   } catch (error) {
     toast(error.message, true);
   } finally {
+    setPlayerBusy(false);
     if (button) button.disabled = false;
   }
 }
@@ -965,18 +1036,45 @@ async function uploadLocalSaveIfConfirmed(local, game) {
   ) {
     return false;
   }
-  await api(`./api/games/${currentGameId}/saves/${local.kind}/${local.slot}`, {
-    method: "PUT",
-    headers: {
-      "content-type": "application/octet-stream",
-      "if-match-save-hash": remote?.hash || "none",
-      ...(local.kind === "state"
-        ? stateHeaders(game)
-        : { "x-profile-id": state.profileId }),
-    },
-    body: await local.blob.arrayBuffer(),
-  });
+  await uploadChunkedSave(local, game, remote?.hash || "none");
   return true;
+}
+
+async function uploadChunkedSave(local, game, ifMatchSaveHash) {
+  const chunkSize = 1024 * 1024;
+  const buffer = await local.blob.arrayBuffer();
+  const totalChunks = Math.ceil(buffer.byteLength / chunkSize);
+  const base = `./api/games/${currentGameId}/saves/${local.kind}/${local.slot}/chunked`;
+  const start = await api(`${base}/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      totalSize: buffer.byteLength,
+      totalChunks,
+      hash: local.hash,
+      ifMatchSaveHash,
+      emulatorVersion: game?.emulatorVersion || "4.2.3",
+      core: game?.core || "",
+      romHash: game?.hash || "",
+    }),
+  });
+  for (let index = 0; index < totalChunks; index += 1) {
+    const from = index * chunkSize;
+    const chunk = buffer.slice(
+      from,
+      Math.min(from + chunkSize, buffer.byteLength),
+    );
+    await api(`${base}/${start.uploadId}/${index}`, {
+      method: "PUT",
+      headers: { "content-type": "application/octet-stream" },
+      body: chunk,
+    });
+  }
+  await api(`${base}/${start.uploadId}/finish`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
 }
 
 async function manageLocalStorage() {
