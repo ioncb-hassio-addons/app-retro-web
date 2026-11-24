@@ -10,10 +10,7 @@ import { createRetroApp } from "../app/server.js";
 import { normalizeTitle, titleFromFilename } from "../app/titles.js";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import {
-  loadOrCreateSelfSignedCertificate,
-  resolveTls,
-} from "../app/tls.js";
+import { loadOrCreateSelfSignedCertificate, resolveTls } from "../app/tls.js";
 
 async function setup() {
   const dataPath = fs.mkdtempSync(path.join(os.tmpdir(), "retro-web-test-"));
@@ -377,7 +374,6 @@ test("unsafe external configuration is rejected", () => {
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
-
 test("ROM titles are normalized and profile language is persisted", async () => {
   assert.equal(titleFromFilename("Super_Mario_64.z64"), "Super Mario 64");
   assert.equal(
@@ -534,32 +530,36 @@ test("large save states can be synchronized in chunks", async () => {
   }
 });
 
-test("TLS resolves and reuses a persistent self-signed certificate", {
-  skip: spawnSync("openssl", ["version"]).status !== 0,
-}, () => {
-  const dataPath = fs.mkdtempSync(path.join(os.tmpdir(), "retro-web-tls-"));
-  try {
-    const config = {
-      dataPath,
-      external_access: true,
-      ssl: false,
-      tls_self_signed_days: 365,
-      tls_self_signed_common_name: "retro-web.local",
-    };
-    const first = resolveTls(config);
-    assert.equal(first.source, "self_signed");
-    assert.ok(fs.existsSync(first.certPath));
-    assert.ok(fs.existsSync(first.keyPath));
-    assert.equal(fs.statSync(first.keyPath).mode & 0o777, 0o600);
+test(
+  "TLS resolves and reuses a persistent self-signed certificate",
+  {
+    skip: spawnSync("openssl", ["version"]).status !== 0,
+  },
+  () => {
+    const dataPath = fs.mkdtempSync(path.join(os.tmpdir(), "retro-web-tls-"));
+    try {
+      const config = {
+        dataPath,
+        external_access: true,
+        ssl: false,
+        tls_self_signed_days: 365,
+        tls_self_signed_common_name: "retro-web.local",
+      };
+      const first = resolveTls(config);
+      assert.equal(first.source, "self_signed");
+      assert.ok(fs.existsSync(first.certPath));
+      assert.ok(fs.existsSync(first.keyPath));
+      assert.equal(fs.statSync(first.keyPath).mode & 0o777, 0o600);
 
-    const second = loadOrCreateSelfSignedCertificate(config);
-    assert.equal(second.source, "self_signed");
-    assert.deepEqual(second.cert, first.cert);
-    assert.deepEqual(second.key, first.key);
-  } finally {
-    fs.rmSync(dataPath, { recursive: true, force: true });
-  }
-});
+      const second = loadOrCreateSelfSignedCertificate(config);
+      assert.equal(second.source, "self_signed");
+      assert.deepEqual(second.cert, first.cert);
+      assert.deepEqual(second.key, first.key);
+    } finally {
+      fs.rmSync(dataPath, { recursive: true, force: true });
+    }
+  },
+);
 
 test("TLS rejects unsafe Home Assistant certificate filenames", () => {
   const config = {

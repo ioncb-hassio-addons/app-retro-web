@@ -35,9 +35,7 @@ export function loadConfig(optionsPath = "/data/options.json") {
   config.max_upload_mb = Number(config.max_upload_mb);
   config.profile_limit = Number(config.profile_limit);
   config.session_timeout_hours = Number(config.session_timeout_hours);
-  config.tls_self_signed_days = Number(
-    config.tls_self_signed_days,
-  );
+  config.tls_self_signed_days = Number(config.tls_self_signed_days);
 
   if (
     config.external_access &&

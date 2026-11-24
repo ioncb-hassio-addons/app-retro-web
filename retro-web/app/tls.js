@@ -148,7 +148,8 @@ function validateCertificatePair(cert, key) {
   }
   const privateKey = crypto.createPrivateKey(key);
   const publicKey = crypto.createPublicKey(cert);
-  const keyDer = crypto.createPublicKey(privateKey)
+  const keyDer = crypto
+    .createPublicKey(privateKey)
     .export({ format: "der", type: "spki" })
     .toString("hex");
   const certDer = publicKey
