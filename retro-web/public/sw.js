@@ -1,5 +1,5 @@
-const CACHE_NAME = "retro-web-shell-v1";
-const CORE_CACHE_NAME = "retro-web-emulator-v1";
+const CACHE_NAME = "retro-web-shell-v2";
+const CORE_CACHE_NAME = "retro-web-emulator-v2";
 const SHELL = [
   "./",
   "./index.html",

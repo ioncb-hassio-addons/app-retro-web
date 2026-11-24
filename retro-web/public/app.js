@@ -180,7 +180,6 @@ function renderProfiles() {
     );
   });
   bindLanguageSelector();
-  void hydrateCachedCovers();
 }
 
 async function selectProfile(profileId) {
@@ -317,6 +316,7 @@ function renderLibrary() {
     });
   });
   bindLanguageSelector();
+  void hydrateCachedCovers();
 }
 
 function gameCard(game) {
@@ -680,12 +680,10 @@ async function launchGame(gameId) {
 let currentGameId = null;
 let closingEmulator = false;
 let suppressNativeSaveUpload = false;
-let restoringState = false;
-let restoreFailureCleanup = null;
 const runtimeBlobUrls = new Set();
 const coverBlobUrls = new Set();
 
-async function startEmulator(game, loadStateUrl = null) {
+async function startEmulator(game) {
   await releaseRuntimeBlobUrls();
   currentGameId = game.id;
   const romUrl = await resolveCachedAsset(
@@ -715,8 +713,6 @@ async function startEmulator(game, loadStateUrl = null) {
   window.EJS_gameID = `${state.profileId}-${game.id}-${game.core}`;
   window.EJS_gameUrl = romUrl;
   window.EJS_biosUrl = biosUrl;
-  window.EJS_loadStateURL = loadStateUrl || undefined;
-  window.EJS_startOnLoaded = Boolean(loadStateUrl);
   window.EJS_pathtodata = new URL(
     "./vendor/emulatorjs/data/",
     location.href,
@@ -733,12 +729,6 @@ async function startEmulator(game, loadStateUrl = null) {
   window.EJS_onLoadSave = loadNativeSave;
   window.EJS_onGameStart = () => {
     void loadNativeSave();
-    if (restoringState) {
-      setTimeout(() => {
-        restoreFailureCleanup?.();
-        toast(t("stateLoaded"));
-      }, 1000);
-    }
   };
   window.EJS_ready = () => {
     const emulator = window.EJS_emulator;
@@ -786,61 +776,75 @@ async function loadSaveState() {
       selectedSlot(),
     );
     const compatibleLocal = compatibleLocalSave(local, game);
-    let buffer = compatibleLocal
-      ? await local.blob.arrayBuffer()
-      : await api(
-          `./api/games/${currentGameId}/saves/state/${selectedSlot()}`,
-          { headers: stateHeaders(game) },
-        );
-    restoringState = true;
-    const stateUrl = URL.createObjectURL(
-      new Blob([buffer], { type: "application/octet-stream" }),
-    );
-    const cleanup = () => {
-      window.removeEventListener("error", handleRestoreFailure);
-      URL.revokeObjectURL(stateUrl);
-      restoreFailureCleanup = null;
-      restoringState = false;
-      suppressNativeSaveUpload = false;
-    };
-    restoreFailureCleanup = cleanup;
-    window.addEventListener("error", handleRestoreFailure);
-    const previousEmulator = window.EJS_emulator;
-    previousEmulator?.pause?.();
-    closingEmulator = true;
-    suppressNativeSaveUpload = true;
-    document.querySelector("#player")?.replaceChildren();
-    window.EJS_emulator = undefined;
-    closingEmulator = false;
-    await startEmulator(game, stateUrl);
-    // Keep the previous runtime paused until this page changes. Aborting it
-    // during the new loader race removes #player before EmulatorJS initializes.
+    let buffer;
+    if (compatibleLocal) {
+      buffer = await local.blob.arrayBuffer();
+    } else {
+      buffer = await fetchServerSave("state", selectedSlot(), game);
+    }
+    if (!window.EJS_emulator?.gameManager) {
+      throw new Error("The emulator is not ready to restore a save state");
+    }
+    window.EJS_emulator.gameManager.loadState(new Uint8Array(buffer));
+    toast(t("stateLoaded"));
   } catch (error) {
-    restoreFailureCleanup?.();
     toast(error.message, true);
   }
 }
 
-function handleRestoreFailure(event) {
-  if (!restoringState) return;
-  const message = String(event.error?.message || event.message || "");
-  console.warn("[Retro Web] Restore error event", {
-    message,
-    type: event.type,
-    filename: event.filename,
-    line: event.lineno,
-    column: event.colno,
-    restoringState,
-  });
-  if (!/memory access out of bounds/i.test(message)) return;
-  event.preventDefault();
-  restoreFailureCleanup?.();
-  toast(t("stateRestoreFailed"), true);
-  void exitToLibrary(false);
-}
-
 async function uploadNativeSave({ save }) {
   await saveLocally("save", save);
+}
+
+async function fetchServerSave(kind, slot, game) {
+  const headers =
+    kind === "state" ? stateHeaders(game) : { "x-profile-id": state.profileId };
+  setPlayerBusy(true, t("syncingFromServer"));
+  try {
+    return await api(`./api/games/${currentGameId}/saves/${kind}/${slot}`, {
+      headers,
+    });
+  } finally {
+    setPlayerBusy(false);
+  }
+}
+
+function setPlayerBusy(busy, message = "") {
+  const stage = document.querySelector(".player-stage");
+  if (!stage) return;
+  let overlay = stage.querySelector(".sync-overlay");
+  if (!busy) {
+    overlay?.remove();
+    stage.removeAttribute("aria-busy");
+    document
+      .querySelectorAll(".player-toolbar button, .player-toolbar select")
+      .forEach((element) => {
+        element.disabled = false;
+      });
+    const emulatorControls = document.querySelector("#player .ejs_game");
+    if (emulatorControls) emulatorControls.style.pointerEvents = "";
+    return;
+  }
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.className = "sync-overlay";
+    overlay.innerHTML = `
+      <div class="sync-card">
+        <span class="sync-spinner" aria-hidden="true"></span>
+        <strong>${escapeHtml(message)}</strong>
+      </div>`;
+    stage.appendChild(overlay);
+  } else {
+    overlay.querySelector("strong").textContent = message;
+  }
+  stage.setAttribute("aria-busy", "true");
+  document
+    .querySelectorAll(".player-toolbar button, .player-toolbar select")
+    .forEach((element) => {
+      element.disabled = true;
+    });
+  const emulatorControls = document.querySelector("#player .ejs_game");
+  if (emulatorControls) emulatorControls.style.pointerEvents = "none";
 }
 
 async function loadNativeSave() {
@@ -849,9 +853,7 @@ async function loadNativeSave() {
     const compatibleLocal = compatibleLocalSave(local, window.EJS_currentGame);
     const buffer = compatibleLocal
       ? await local.blob.arrayBuffer()
-      : await api(`./api/games/${currentGameId}/saves/save/1`, {
-          headers: { "x-profile-id": state.profileId },
-        });
+      : await fetchServerSave("save", 1, window.EJS_currentGame);
     const manager = window.EJS_emulator?.gameManager;
     if (!manager) return;
     const savePath = manager.getSaveFilePath();
