@@ -235,6 +235,32 @@ test("ROM uploads, BIOS uploads, and profile saves are isolated", async () => {
       },
     );
     assert.equal(incompatible.status, 409);
+    const saveMetadata = await json(
+      await fetch(
+        `${fixture.ingress.base}/api/games/${game.id}/saves/state/1/meta`,
+        { headers: { "x-profile-id": firstProfile.id } },
+      ),
+    );
+    assert.equal(saveMetadata.hash.length, 64);
+    assert.equal(saveMetadata.core, game.core);
+    assert.equal(saveMetadata.romHash, game.hash);
+
+    const staleWrite = await fetch(
+      `${fixture.ingress.base}/api/games/${game.id}/saves/state/1`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/octet-stream",
+          "x-profile-id": firstProfile.id,
+          "x-retro-core": game.core,
+          "x-retro-emulator-version": "4.2.3",
+          "x-retro-rom-hash": game.hash,
+          "if-match-save-hash": "stale-hash",
+        },
+        body: new Uint8Array([9, 9, 9]),
+      },
+    );
+    assert.equal(staleWrite.status, 412);
 
     const coverRead = await fetch(
       `${fixture.ingress.base}/api/games/${game.id}/cover`,

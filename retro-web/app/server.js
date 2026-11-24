@@ -34,6 +34,7 @@ import { normalizeTitle } from "./titles.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicRoot = path.join(root, "public");
+const emulatorManifest = loadEmulatorManifest();
 
 export function createRetroApp(config, db, mode) {
   const app = express();
@@ -222,7 +223,19 @@ export function createRetroApp(config, db, mode) {
   app.get("/api/games", (request, response) => {
     const profileId = activeProfileId(request, response, db, mode);
     if (!profileId) return;
-    response.json(listGames(db, profileId));
+    response.json(
+      listGames(db, profileId).map((game) => ({
+        ...game,
+        emulatorVersion: emulatorManifest.emulatorVersion,
+        coreBuildId: emulatorManifest.cores?.[game.core]?.buildId || null,
+        biosUrl: game.bios_system
+          ? biosUrlForGame(config.dataPath, game)
+          : null,
+        biosHash: game.bios_system
+          ? readBiosManifest(config.dataPath, game.bios_system)?.hash || null
+          : null,
+      })),
+    );
   });
 
   app.get("/api/games/:gameId", (request, response) => {
@@ -239,6 +252,12 @@ export function createRetroApp(config, db, mode) {
       core: game.core,
       hasCover: Boolean(game.cover_path),
       hash: game.hash,
+      size: game.size,
+      emulatorVersion: emulatorManifest.emulatorVersion,
+      coreBuildId: emulatorManifest.cores?.[game.core]?.buildId || null,
+      biosHash: game.bios_system
+        ? readBiosManifest(config.dataPath, game.bios_system)?.hash || null
+        : null,
       biosUrl: game.bios_system ? biosUrlForGame(config.dataPath, game) : null,
     });
   });
@@ -382,6 +401,29 @@ export function createRetroApp(config, db, mode) {
         .json({ error: "Save state ROM does not match game" });
       return;
     }
+    const previous = getSave(db, profileId, game.id, kind, slot);
+    const expectedHash = request.get("if-match-save-hash");
+    const previousHash =
+      previous?.save_hash ||
+      (previous?.file_path && fs.existsSync(previous.file_path)
+        ? sha256File(previous.file_path)
+        : null);
+    if (
+      expectedHash &&
+      expectedHash !== "none" &&
+      (!previous || previousHash !== expectedHash)
+    ) {
+      response.status(412).json({
+        error: "The server save changed. Refresh and resolve the conflict.",
+      });
+      return;
+    }
+    if (expectedHash === "none" && previous) {
+      response.status(412).json({
+        error: "A server save now exists. Refresh and resolve the conflict.",
+      });
+      return;
+    }
     const targetPath = savePath(
       config.dataPath,
       profileId,
@@ -425,6 +467,34 @@ export function createRetroApp(config, db, mode) {
     );
     markPlayed(db, profileId, game.id);
     response.status(204).end();
+  });
+
+  app.get("/api/games/:gameId/saves/:kind/:slot/meta", (request, response) => {
+    const profileId = activeProfileId(request, response, db, mode);
+    if (!profileId) return;
+    const save = getSave(
+      db,
+      profileId,
+      request.params.gameId,
+      request.params.kind,
+      Number(request.params.slot),
+    );
+    if (!save || !fs.existsSync(save.file_path)) {
+      response.status(404).json({ error: "Save not found" });
+      return;
+    }
+    const hash = save.save_hash || sha256File(save.file_path);
+    response.set("ETag", `"${hash}"`);
+    response.json({
+      hash,
+      size: fs.statSync(save.file_path).size,
+      updatedAt: save.updated_at,
+      core: save.core,
+      emulatorVersion: save.emulator_version,
+      romHash: save.rom_hash,
+      kind: save.kind,
+      slot: save.slot,
+    });
   });
 
   if (mode === "ingress") {
@@ -883,6 +953,23 @@ function markPlayed(db, profileId, gameId) {
      VALUES (?, ?, 0, ?)
      ON CONFLICT(profile_id, game_id) DO UPDATE SET last_played=excluded.last_played`,
   ).run(profileId, gameId, new Date().toISOString());
+}
+
+function loadEmulatorManifest() {
+  const manifestPath = path.join(
+    publicRoot,
+    "vendor",
+    "emulatorjs",
+    "manifest.json",
+  );
+  if (!fs.existsSync(manifestPath)) {
+    return { emulatorVersion: "4.2.3", cores: {} };
+  }
+  try {
+    return JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  } catch {
+    return { emulatorVersion: "4.2.3", cores: {} };
+  }
 }
 
 export function start() {

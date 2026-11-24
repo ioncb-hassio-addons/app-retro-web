@@ -104,9 +104,10 @@ export function listGames(db, profileId) {
   return db
     .prepare(
       `SELECT games.id, games.title, games.platform, games.core,
-              games.bios_system, games.size, games.created_at,
+              games.bios_system, games.size, games.hash, games.created_at,
               CASE WHEN games.cover_path IS NOT NULL THEN 1 ELSE 0 END AS has_cover,
               games.cover_source, games.cover_source_name,
+              games.cover_updated_at,
             CASE
               WHEN games.bios_system = 'arcade' THEN 1
               ELSE 0

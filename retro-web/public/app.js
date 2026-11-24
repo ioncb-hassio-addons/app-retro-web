@@ -1,4 +1,16 @@
 import { detectLocale, getLocale, setLocale, t } from "./i18n.js";
+import {
+  cacheAsset,
+  clearProfileAssets,
+  clearProfileSaves,
+  getCachedAsset,
+  getLocalSave,
+  getRememberedProfileContext,
+  getStorageUsage,
+  listLocalSaves,
+  putLocalSave,
+  rememberProfileContext,
+} from "./local-store.js";
 
 const app = document.querySelector("#app");
 const toastElement = document.querySelector("#toast");
@@ -69,12 +81,29 @@ async function boot() {
     state.bootstrap = await api("./api/bootstrap");
     state.csrf = state.bootstrap.csrf;
     state.profileId = state.bootstrap.profileId || null;
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").catch((error) => {
+        console.warn("[Retro Web] Service worker registration failed", error);
+      });
+    }
     if (state.bootstrap.external && !state.bootstrap.authenticated) {
       renderLogin();
       return;
     }
     renderProfiles();
   } catch (error) {
+    const localContext = await getRememberedProfileContext().catch(() => null);
+    if (localContext?.bootstrap?.external === false) {
+      state.bootstrap = localContext.bootstrap;
+      state.profileId = localContext.profileId;
+      state.games = localContext.games;
+      state.platforms = [];
+      state.language = localContext.language || state.language;
+      setLocale(state.language);
+      toast(t("offlineMode"), true);
+      renderLibrary();
+      return;
+    }
     renderError(error.message);
   }
 }
@@ -122,6 +151,8 @@ function renderLogin() {
 
 function renderProfiles() {
   state.screen = "profiles";
+  for (const url of coverBlobUrls) URL.revokeObjectURL(url);
+  coverBlobUrls.clear();
   app.innerHTML = `
     <main class="content">
       <section class="hero">
@@ -149,6 +180,7 @@ function renderProfiles() {
     );
   });
   bindLanguageSelector();
+  void hydrateCachedCovers();
 }
 
 async function selectProfile(profileId) {
@@ -180,6 +212,12 @@ async function loadLibrary() {
     if (!state.bootstrap.external) {
       state.platforms = await api("./api/admin/platforms");
     }
+    await rememberProfileContext({
+      profileId: state.profileId,
+      bootstrap: state.bootstrap,
+      games: state.games,
+      language: state.language,
+    });
     renderLibrary();
   } catch (error) {
     toast(error.message, true);
@@ -253,6 +291,7 @@ function renderLibrary() {
     <main class="content">
       <section class="hero">
         <span class="chip">${escapeHtml(profile?.name || t("profile"))}</span>
+        ${navigator.onLine ? "" : `<span class="chip">${t("offlineModeShort")}</span>`}
         <h1>${t("continueAdventure")}</h1>
         <p>${t("libraryHelp")}</p>
       </section>
@@ -286,7 +325,7 @@ function gameCard(game) {
       <div class="cover">
         ${
           game.has_cover
-            ? `<img src="./api/games/${encodeURIComponent(game.id)}/cover" alt="${escapeHtml(game.title)}" loading="lazy" /><span class="cover-fallback" hidden>🕹️</span>`
+            ? `<img data-cover-game="${escapeHtml(game.id)}" alt="${escapeHtml(game.title)}" loading="lazy" hidden /><span class="cover-fallback">🕹️</span>`
             : '<span class="cover-fallback">🕹️</span>'
         }
       </div>
@@ -327,6 +366,8 @@ async function openAdmin() {
 
 function renderAdmin() {
   state.screen = "admin";
+  for (const url of coverBlobUrls) URL.revokeObjectURL(url);
+  coverBlobUrls.clear();
   state.pendingCoverFile = null;
   state.pendingLibretroCover = null;
   revokeCoverPreview();
@@ -589,7 +630,14 @@ async function uploadBios(event) {
 
 async function launchGame(gameId) {
   try {
-    const game = await api(`./api/games/${gameId}`);
+    let game;
+    try {
+      game = await api(`./api/games/${gameId}`);
+    } catch (error) {
+      if (navigator.onLine) throw error;
+      game = state.games.find((item) => item.id === gameId);
+      if (!game) throw error;
+    }
     app.innerHTML = `
       <main class="player-view">
         <header class="player-toolbar">
@@ -598,6 +646,8 @@ async function launchGame(gameId) {
             <label class="row">${t("slot")}
               <select id="save-slot">${[1, 2, 3, 4, 5].map((slot) => `<option>${slot}</option>`).join("")}</select>
             </label>
+            <button class="secondary" id="sync-saves">${t("syncSaves")}</button>
+            <button class="secondary" id="local-storage">${t("localStorage")}</button>
             <button class="secondary" id="exit-player">${t("logout")}</button>
           </div>
         </header>
@@ -615,6 +665,12 @@ async function launchGame(gameId) {
           toast(error.message, true);
         }
       });
+    document
+      .querySelector("#sync-saves")
+      .addEventListener("click", syncCurrentSaves);
+    document
+      .querySelector("#local-storage")
+      .addEventListener("click", manageLocalStorage);
     await startEmulator(game);
   } catch (error) {
     toast(error.message, true);
@@ -626,9 +682,26 @@ let closingEmulator = false;
 let suppressNativeSaveUpload = false;
 let restoringState = false;
 let restoreFailureCleanup = null;
+const runtimeBlobUrls = new Set();
+const coverBlobUrls = new Set();
 
 async function startEmulator(game, loadStateUrl = null) {
+  await releaseRuntimeBlobUrls();
   currentGameId = game.id;
+  const romUrl = await resolveCachedAsset(
+    "rom",
+    game.hash,
+    `./api/games/${game.id}/rom`,
+    game.hash,
+  );
+  const biosUrl = game.biosUrl
+    ? await resolveCachedAsset(
+        "bios",
+        game.biosHash || game.biosUrl,
+        game.biosUrl,
+        game.biosHash,
+      )
+    : undefined;
   window.EJS_currentGame = game;
   window.EJS_player = "#player";
   window.EJS_core = game.core;
@@ -640,8 +713,8 @@ async function startEmulator(game, loadStateUrl = null) {
   window.EJS_backgroundBlur = true;
   window.EJS_backgroundColor = "#050609";
   window.EJS_gameID = `${state.profileId}-${game.id}-${game.core}`;
-  window.EJS_gameUrl = `./api/games/${game.id}/rom`;
-  window.EJS_biosUrl = game.biosUrl || undefined;
+  window.EJS_gameUrl = romUrl;
+  window.EJS_biosUrl = biosUrl;
   window.EJS_loadStateURL = loadStateUrl || undefined;
   window.EJS_startOnLoaded = Boolean(loadStateUrl);
   window.EJS_pathtodata = new URL(
@@ -683,7 +756,7 @@ async function startEmulator(game, loadStateUrl = null) {
     };
     emulator.on("saveSaveFiles", (save) => {
       if (suppressNativeSaveUpload) return;
-      void uploadBinarySave("save", save).catch((error) =>
+      void saveLocally("save", save).catch((error) =>
         toast(error.message, true),
       );
     });
@@ -699,19 +772,26 @@ function selectedSlot() {
 }
 
 async function uploadSaveState({ state: save }) {
-  await uploadBinarySave("state", save);
-  toast(t("stateSaved"));
+  await saveLocally("state", save);
+  toast(t("stateSavedLocal"));
 }
 
 async function loadSaveState() {
   try {
     const game = window.EJS_currentGame;
-    const buffer = await api(
-      `./api/games/${currentGameId}/saves/state/${selectedSlot()}`,
-      {
-        headers: stateHeaders(game),
-      },
+    const local = await getLocalSave(
+      state.profileId,
+      currentGameId,
+      "state",
+      selectedSlot(),
     );
+    const compatibleLocal = compatibleLocalSave(local, game);
+    let buffer = compatibleLocal
+      ? await local.blob.arrayBuffer()
+      : await api(
+          `./api/games/${currentGameId}/saves/state/${selectedSlot()}`,
+          { headers: stateHeaders(game) },
+        );
     restoringState = true;
     const stateUrl = URL.createObjectURL(
       new Blob([buffer], { type: "application/octet-stream" }),
@@ -760,14 +840,18 @@ function handleRestoreFailure(event) {
 }
 
 async function uploadNativeSave({ save }) {
-  await uploadBinarySave("save", save);
+  await saveLocally("save", save);
 }
 
 async function loadNativeSave() {
   try {
-    const buffer = await api(`./api/games/${currentGameId}/saves/save/1`, {
-      headers: { "x-profile-id": state.profileId },
-    });
+    const local = await getLocalSave(state.profileId, currentGameId, "save", 1);
+    const compatibleLocal = compatibleLocalSave(local, window.EJS_currentGame);
+    const buffer = compatibleLocal
+      ? await local.blob.arrayBuffer()
+      : await api(`./api/games/${currentGameId}/saves/save/1`, {
+          headers: { "x-profile-id": state.profileId },
+        });
     const manager = window.EJS_emulator?.gameManager;
     if (!manager) return;
     const savePath = manager.getSaveFilePath();
@@ -791,7 +875,7 @@ async function flushNativeSave() {
   if (!manager) return;
   const save = await manager.getSaveFile();
   if (!save || save.byteLength === 0) return;
-  await uploadBinarySave("save", save);
+  await saveLocally("save", save);
 }
 
 async function stopEmulator() {
@@ -814,33 +898,199 @@ async function exitToLibrary(saveNativeSave) {
     window.EJS_emulator = undefined;
     window.EJS_player = undefined;
     window.EJS_currentGame = undefined;
+    await releaseRuntimeBlobUrls();
     await loadLibrary();
     closingEmulator = false;
     suppressNativeSaveUpload = false;
   }
 }
 
-async function uploadBinarySave(kind, save) {
+async function saveLocally(kind, save) {
   if (!save || save.byteLength === 0) return;
   const slot = kind === "save" ? 1 : selectedSlot();
-  await api(`./api/games/${currentGameId}/saves/${kind}/${slot}`, {
+  await putLocalSave(state.profileId, window.EJS_currentGame, kind, slot, save);
+}
+
+async function syncCurrentSaves() {
+  const button = document.querySelector("#sync-saves");
+  if (button) button.disabled = true;
+  try {
+    const localSaves = await listLocalSaves(state.profileId, currentGameId);
+    if (!localSaves.length) {
+      toast(t("noLocalSaves"), true);
+      return;
+    }
+    let uploaded = 0;
+    for (const local of localSaves) {
+      if (await uploadLocalSaveIfConfirmed(local, window.EJS_currentGame)) {
+        uploaded += 1;
+      }
+    }
+    toast(uploaded ? `${t("syncComplete")}: ${uploaded}` : t("syncNotNeeded"));
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function uploadLocalSaveIfConfirmed(local, game) {
+  let remote;
+  try {
+    remote = await api(
+      `./api/games/${currentGameId}/saves/${local.kind}/${local.slot}/meta`,
+      {
+        headers:
+          local.kind === "state"
+            ? stateHeaders(game)
+            : { "x-profile-id": state.profileId },
+      },
+    );
+  } catch (error) {
+    if (error.status !== 404) throw error;
+  }
+  if (remote?.hash === local.hash) return false;
+  if (
+    remote &&
+    !window.confirm(
+      [
+        t("syncConflict"),
+        `${t("serverSave")}: ${remote.updatedAt}`,
+        `${t("localSave")}: ${new Date(local.updatedAt).toISOString()}`,
+        t("replaceServerSave"),
+      ].join("\n"),
+    )
+  ) {
+    return false;
+  }
+  await api(`./api/games/${currentGameId}/saves/${local.kind}/${local.slot}`, {
     method: "PUT",
     headers: {
       "content-type": "application/octet-stream",
-      "x-profile-id": state.profileId,
-      ...(kind === "state" ? stateHeaders(window.EJS_currentGame) : {}),
+      "if-match-save-hash": remote?.hash || "none",
+      ...(local.kind === "state"
+        ? stateHeaders(game)
+        : { "x-profile-id": state.profileId }),
     },
-    body: save,
+    body: await local.blob.arrayBuffer(),
   });
+  return true;
+}
+
+async function manageLocalStorage() {
+  try {
+    const usage = await getStorageUsage(state.profileId);
+    const message = [
+      `${t("localAssets")}: ${formatBytes(usage.assets)}`,
+      `${t("localSaves")}: ${formatBytes(usage.saves)}`,
+      `${t("totalLocalStorage")}: ${formatBytes(usage.total)}`,
+      "",
+      t("clearLocalAssetsQuestion"),
+    ].join("\n");
+    if (window.confirm(message)) {
+      await clearProfileAssets(state.profileId);
+      await releaseRuntimeBlobUrls();
+      toast(t("localAssetsCleared"));
+    }
+    if (usage.saves && window.confirm(t("clearLocalSavesQuestion"))) {
+      await clearProfileSaves(state.profileId);
+      toast(t("localSavesCleared"));
+    }
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1,
+  );
+  return `${(bytes / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
 function stateHeaders(game) {
   return {
     "x-profile-id": state.profileId,
     "x-retro-core": game?.core || "",
-    "x-retro-emulator-version": "4.2.3",
+    "x-retro-emulator-version": game?.emulatorVersion || "4.2.3",
     "x-retro-rom-hash": game?.hash || "",
   };
+}
+
+function compatibleLocalSave(save, game) {
+  return (
+    save?.blob &&
+    save.core === game?.core &&
+    save.romHash === game?.hash &&
+    save.emulatorVersion === game?.emulatorVersion
+  );
+}
+
+async function resolveCachedAsset(kind, identifier, url, expectedHash = null) {
+  const cached = await getCachedAsset(state.profileId, kind, identifier);
+  if (cached?.blob && (!expectedHash || cached.hash === expectedHash)) {
+    const objectUrl = URL.createObjectURL(cached.blob);
+    runtimeBlobUrls.add(objectUrl);
+    return objectUrl;
+  }
+
+  const arrayBuffer = await api(url, {
+    headers: { "x-profile-id": state.profileId },
+  });
+  const blob = new Blob([arrayBuffer], { type: "application/octet-stream" });
+  const record = await cacheAsset(
+    state.profileId,
+    kind,
+    identifier,
+    { expectedHash },
+    blob,
+  );
+  if (expectedHash && record.hash !== expectedHash) {
+    throw new Error("Downloaded resource does not match its expected hash");
+  }
+  const objectUrl = URL.createObjectURL(blob);
+  runtimeBlobUrls.add(objectUrl);
+  return objectUrl;
+}
+
+async function hydrateCachedCovers() {
+  for (const url of coverBlobUrls) URL.revokeObjectURL(url);
+  coverBlobUrls.clear();
+  for (const game of state.games.filter((item) => item.has_cover)) {
+    const identifier = `${game.id}:${game.cover_updated_at || "current"}`;
+    let cached = await getCachedAsset(state.profileId, "cover", identifier);
+    if (!cached?.blob && navigator.onLine) {
+      try {
+        const buffer = await api(`./api/games/${game.id}/cover`, {
+          headers: { "x-profile-id": state.profileId },
+        });
+        cached = await cacheAsset(
+          state.profileId,
+          "cover",
+          identifier,
+          {},
+          new Blob([buffer]),
+        );
+      } catch (error) {
+        console.warn("[Retro Web] Cover cache failed", error);
+      }
+    }
+    const image = document.querySelector(`[data-cover-game="${game.id}"]`);
+    if (!image || !cached?.blob) continue;
+    const objectUrl = URL.createObjectURL(cached.blob);
+    coverBlobUrls.add(objectUrl);
+    image.src = objectUrl;
+    image.hidden = false;
+    image.nextElementSibling.hidden = true;
+  }
+}
+
+async function releaseRuntimeBlobUrls() {
+  for (const url of runtimeBlobUrls) URL.revokeObjectURL(url);
+  runtimeBlobUrls.clear();
 }
 
 boot();

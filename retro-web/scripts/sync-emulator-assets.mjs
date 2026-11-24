@@ -53,15 +53,22 @@ await writeFile(path.join(publicRoot, "emulator.min.css"), minifiedCss.styles);
 const english = JSON.parse(
   await readFile(path.join(publicRoot, "localization", "en-US.json"), "utf8"),
 );
+const portableArrows = {
+  CU: "↑",
+  CD: "↓",
+  CL: "←",
+  CR: "→",
+};
+await writeFile(
+  path.join(publicRoot, "localization", "en-US.json"),
+  `${JSON.stringify({ ...english, ...portableArrows }, null, 2)}\n`,
+);
 const spanishPath = path.join(publicRoot, "localization", "es-ES.json");
 const spanish = JSON.parse(await readFile(spanishPath, "utf8"));
 const spanishOverrides = {
   "-1": "-1",
   "+1": "+1",
-  CU: "🡱",
-  CD: "🡳",
-  CL: "🡰",
-  CR: "🡲",
+  ...portableArrows,
   Disks: "Discos",
   "Exit Emulation": "Salir de la emulación",
   "D-PAD UP": "D-PAD ARRIBA",
@@ -144,3 +151,25 @@ for (const core of cores) {
     force: true,
   });
 }
+
+const coreMetadata = {};
+for (const core of cores) {
+  const reportPath = path.join(coresRoot, "reports", `${core}.json`);
+  const report = JSON.parse(await readFile(reportPath, "utf8"));
+  coreMetadata[core] = {
+    buildId: report.buildStart || null,
+    version: report.version || null,
+  };
+}
+
+await writeFile(
+  path.join(path.dirname(publicRoot), "manifest.json"),
+  `${JSON.stringify(
+    {
+      emulatorVersion: "4.2.3",
+      cores: coreMetadata,
+    },
+    null,
+    2,
+  )}\n`,
+);
