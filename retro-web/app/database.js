@@ -25,6 +25,7 @@ export function createDatabase(dataPath) {
       core TEXT NOT NULL,
       extension TEXT NOT NULL,
       rom_path TEXT NOT NULL UNIQUE,
+      rom_filename TEXT,
       bios_system TEXT,
       size INTEGER NOT NULL,
       hash TEXT NOT NULL UNIQUE,
@@ -69,6 +70,7 @@ export function createDatabase(dataPath) {
   ensureColumn(db, "games", "cover_source", "TEXT");
   ensureColumn(db, "games", "cover_source_name", "TEXT");
   ensureColumn(db, "games", "cover_updated_at", "TEXT");
+  ensureColumn(db, "games", "rom_filename", "TEXT");
   ensureColumn(db, "saves", "emulator_version", "TEXT");
   ensureColumn(db, "saves", "core_version", "TEXT");
   ensureColumn(db, "saves", "rom_hash", "TEXT");
@@ -104,7 +106,7 @@ export function listGames(db, profileId) {
   return db
     .prepare(
       `SELECT games.id, games.title, games.platform, games.core,
-              games.bios_system, games.size, games.hash, games.created_at,
+              games.rom_filename AS romFilename, games.bios_system, games.size, games.hash, games.created_at,
               CASE WHEN games.cover_path IS NOT NULL THEN 1 ELSE 0 END AS has_cover,
               games.cover_source, games.cover_source_name,
               games.cover_updated_at,

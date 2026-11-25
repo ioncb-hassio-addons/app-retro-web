@@ -34,6 +34,19 @@ const source = (
   .replace(
     'if (this.debug || (window.location && ["localhost", "127.0.0.1"].includes(location.hostname))) this.checkForUpdates();',
     "// Runtime update checks are disabled for fully self-hosted operation.",
+  )
+  .replace(
+    /if \(this\.config\.dontExtractBIOS === true\) \{\s*this\.gameManager\.FS\.writeFile\(assetUrl, new Uint8Array\(input\)\);\s*return resolve\(assetUrl\);\s*\}/,
+    `if (this.config.dontExtractBIOS === true) {
+      const biosName =
+        typeof assetUrl === "string"
+          ? assetUrl.includes("#")
+            ? assetUrl.split("#").pop()
+            : assetUrl.split("/").pop().split("?")[0]
+          : "bios.zip";
+      this.gameManager.FS.writeFile(\`/\${biosName}\`, new Uint8Array(input));
+      return resolve(assetUrl);
+    }`,
   );
 const minified = await minify(source, {
   compress: true,

@@ -111,6 +111,7 @@ test("ROM uploads, BIOS uploads, and profile saves are isolated", async () => {
     assert.equal(romUpload.status, 201);
     const game = await json(romUpload);
     assert.equal(game.biosSystem, null);
+    assert.equal(game.romFilename, "test.nes");
 
     const png = Buffer.alloc(33);
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(png);
