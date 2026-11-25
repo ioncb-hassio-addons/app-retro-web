@@ -1,5 +1,5 @@
-const CACHE_NAME = "retro-web-shell-v2";
-const CORE_CACHE_NAME = "retro-web-emulator-v2";
+const CACHE_NAME = "retro-web-shell-v3";
+const CORE_CACHE_NAME = "retro-web-emulator-v3";
 const SHELL = [
   "./",
   "./index.html",
@@ -55,13 +55,19 @@ self.addEventListener("fetch", (event) => {
         const network = fetch(request, { headers });
         if (!cached) {
           const response = await network;
-          if (response.ok) cache.put(request, response.clone());
+          if (response.ok) {
+            const responseForCache = response.clone();
+            await cache.put(request, responseForCache);
+          }
           return response;
         }
         event.waitUntil(
           network.then(async (response) => {
             if (response.status === 304) return;
-            if (response.ok) await cache.put(request, response);
+            if (response.ok) {
+              const responseForCache = response.clone();
+              await cache.put(request, responseForCache);
+            }
           }),
         );
         return cached;
@@ -72,11 +78,15 @@ self.addEventListener("fetch", (event) => {
 
   event.respondWith(
     fetch(request)
-      .then((response) => {
+      .then(async (response) => {
         if (response.ok) {
-          caches
-            .open(CACHE_NAME)
-            .then((cache) => cache.put(request, response.clone()));
+          const responseForCache = response.clone();
+          try {
+            const cache = await caches.open(CACHE_NAME);
+            await cache.put(request, responseForCache);
+          } catch (error) {
+            console.warn("[Retro Web] Shell cache update failed", error);
+          }
         }
         return response;
       })

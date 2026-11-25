@@ -34,6 +34,8 @@ options:
   max_upload_mb: 4096
   profile_limit: 8
   enable_arcade: true
+  rom_index_interval_minutes: 60
+  enable_cover_indexing: true
 schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)
   external_access: bool
@@ -50,3 +52,5 @@ schema:
   max_upload_mb: int(16,16384)
   profile_limit: int(1,20)
   enable_arcade: bool
+  rom_index_interval_minutes: int(1,1440)
+  enable_cover_indexing: bool

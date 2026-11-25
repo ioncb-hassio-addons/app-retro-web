@@ -91,6 +91,28 @@ const dictionaries = {
     english: "English",
     languageSaved: "Idioma actualizado",
     externalAdminPassword: "Contraseña administrativa externa",
+    continuePlaying: "Seguir jugando",
+    recentlyAdded: "Agregados recientemente",
+    platforms: "Plataformas",
+    backToLibrary: "Volver a la biblioteca",
+    gamesCount: "{count} juegos",
+    gameCount: "{count} juego",
+    foundServerState:
+      "Se encontró una partida guardada en el servidor. ¿Quieres cargarla?",
+    loadServerState: "Cargar",
+    startFromScratch: "Empezar de cero",
+    saveAndExit: "Guardar y salir",
+    exitGame: "Salir",
+    cancel: "Cancelar",
+    confirmExit: "¿Qué deseas hacer?",
+    reindexNow: "Reindexar ahora",
+    reindexing: "Reindexando...",
+    reindexEnqueued: "Indexación iniciada",
+    reindexRunning: "La indexación ya está en ejecución",
+    reindexStatus: "Estado de indexación",
+    reindexFiles:
+      "{newFiles} nuevos, {changedFiles} cambiados, {errors} errores",
+    reindexNever: "Nunca se ha ejecutado",
   },
   en: {
     app: "Retro Web",
@@ -182,6 +204,27 @@ const dictionaries = {
     english: "English",
     languageSaved: "Language updated",
     externalAdminPassword: "External administrator password",
+    continuePlaying: "Continue playing",
+    recentlyAdded: "Recently added",
+    platforms: "Platforms",
+    backToLibrary: "Back to library",
+    gamesCount: "{count} games",
+    gameCount: "{count} game",
+    foundServerState:
+      "A saved state was found on the server. Do you want to load it?",
+    loadServerState: "Load",
+    startFromScratch: "Start from scratch",
+    saveAndExit: "Save and exit",
+    exitGame: "Exit",
+    cancel: "Cancel",
+    confirmExit: "What would you like to do?",
+    reindexNow: "Reindex now",
+    reindexing: "Reindexing...",
+    reindexEnqueued: "Indexing started",
+    reindexRunning: "Indexing is already running",
+    reindexStatus: "Index status",
+    reindexFiles: "{newFiles} new, {changedFiles} changed, {errors} errors",
+    reindexNever: "Never run",
   },
 };
 
@@ -202,4 +245,11 @@ export function detectLocale() {
 
 export function t(key) {
   return dictionaries[active]?.[key] || dictionaries.en[key] || key;
+}
+
+export function tf(key, values = {}) {
+  return Object.entries(values).reduce(
+    (text, [name, value]) => text.replaceAll(`{${name}}`, String(value)),
+    t(key),
+  );
 }

@@ -26,6 +26,12 @@ export function createDatabase(dataPath) {
       extension TEXT NOT NULL,
       rom_path TEXT NOT NULL UNIQUE,
       rom_filename TEXT,
+      sha1 TEXT,
+      crc32 TEXT,
+      version INTEGER NOT NULL DEFAULT 1,
+      modified_at TEXT,
+      deleted_at TEXT,
+      cover_attempted_at TEXT,
       bios_system TEXT,
       size INTEGER NOT NULL,
       hash TEXT NOT NULL UNIQUE,
@@ -62,6 +68,37 @@ export function createDatabase(dataPath) {
       csrf_token TEXT NOT NULL,
       expires_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS indexed_files (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      relative_path TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      mtime_ms INTEGER NOT NULL,
+      sha1 TEXT,
+      crc32 TEXT,
+      version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      modified_at TEXT,
+      deleted_at TEXT,
+      last_indexed_at TEXT NOT NULL,
+      UNIQUE(kind, platform, relative_path)
+    );
+
+    CREATE TABLE IF NOT EXISTS index_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      duration_ms INTEGER,
+      status TEXT NOT NULL,
+      new_files INTEGER NOT NULL DEFAULT 0,
+      changed_files INTEGER NOT NULL DEFAULT 0,
+      deleted_files INTEGER NOT NULL DEFAULT 0,
+      error_files INTEGER NOT NULL DEFAULT 0,
+      errors TEXT
+    );
   `);
 
   ensureColumn(db, "profiles", "language", "TEXT");
@@ -71,6 +108,12 @@ export function createDatabase(dataPath) {
   ensureColumn(db, "games", "cover_source_name", "TEXT");
   ensureColumn(db, "games", "cover_updated_at", "TEXT");
   ensureColumn(db, "games", "rom_filename", "TEXT");
+  ensureColumn(db, "games", "sha1", "TEXT");
+  ensureColumn(db, "games", "crc32", "TEXT");
+  ensureColumn(db, "games", "version", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "games", "modified_at", "TEXT");
+  ensureColumn(db, "games", "deleted_at", "TEXT");
+  ensureColumn(db, "games", "cover_attempted_at", "TEXT");
   ensureColumn(db, "saves", "emulator_version", "TEXT");
   ensureColumn(db, "saves", "core_version", "TEXT");
   ensureColumn(db, "saves", "rom_hash", "TEXT");
@@ -106,7 +149,9 @@ export function listGames(db, profileId) {
   return db
     .prepare(
       `SELECT games.id, games.title, games.platform, games.core,
-              games.rom_filename AS romFilename, games.bios_system, games.size, games.hash, games.created_at,
+              games.rom_filename AS romFilename, games.sha1, games.crc32,
+              games.version, games.modified_at, games.deleted_at,
+              games.bios_system, games.size, games.hash, games.created_at,
               CASE WHEN games.cover_path IS NOT NULL THEN 1 ELSE 0 END AS has_cover,
               games.cover_source, games.cover_source_name,
               games.cover_updated_at,
@@ -119,6 +164,7 @@ export function listGames(db, profileId) {
        FROM games
        LEFT JOIN progress
          ON progress.game_id = games.id AND progress.profile_id = ?
+       WHERE games.deleted_at IS NULL
        ORDER BY progress.last_played IS NULL, progress.last_played DESC, games.title`,
     )
     .all(profileId);

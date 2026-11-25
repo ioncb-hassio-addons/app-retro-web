@@ -60,16 +60,18 @@
 
 ## Current working state
 
-At the last development point, uncommitted changes were present for:
+The project now includes implemented work for:
 
-- preserving Arcade ROM filenames in SQLite and browser launch parameters;
-- preserving the BIOS filename;
-- preventing Arcade BIOS extraction;
-- a build-time patch of EmulatorJS assets;
-- a test for preserving uploaded ROM filenames.
+- automatic state lookup and server fallback confirmation;
+- SPA emulator restart and save-on-exit behavior;
+- categorized library sections and platform browsing;
+- manual ROM/BIOS folder indexing;
+- SHA-1, CRC32, versions, deletion tracking, and manual reindex endpoints;
+- strict Libretro cover lookup sequence.
 
-A next model should verify, complete, test, format, build, and commit this work
-only if the user asks for commits.
+A next model should verify real browser behavior, Docker builds, and Indexer
+runtime behavior. Commit or push only after explicit user approval unless the
+repository rules and task workflow already require a pull request.
 
 ## Known validation commands
 

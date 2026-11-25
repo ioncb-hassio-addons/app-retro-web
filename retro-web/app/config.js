@@ -16,6 +16,8 @@ const defaults = {
   keyfile: "privkey.pem",
   tls_self_signed_days: 365,
   tls_self_signed_common_name: "",
+  rom_index_interval_minutes: 60,
+  enable_cover_indexing: true,
 };
 
 export function loadConfig(optionsPath = "/data/options.json") {
@@ -36,6 +38,7 @@ export function loadConfig(optionsPath = "/data/options.json") {
   config.profile_limit = Number(config.profile_limit);
   config.session_timeout_hours = Number(config.session_timeout_hours);
   config.tls_self_signed_days = Number(config.tls_self_signed_days);
+  config.rom_index_interval_minutes = Number(config.rom_index_interval_minutes);
 
   if (
     config.external_access &&
