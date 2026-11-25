@@ -22,6 +22,13 @@ under `/data`; the app must not download or distribute copyrighted media.
 
 - Start every new integration or change on a new branch using `feature/`,
   `fix/`, or another appropriate prefix; never implement it directly on `main`.
+- After a pull request is approved and merged into `main`, switch to `main`,
+  fetch and fast-forward `origin/main`, and confirm that the working tree is
+  clean before creating the next `feature/` or `fix/` branch.
+- After the PR merge, never continue development on the old feature or fix
+  branch. Open a fresh branch from the updated `main`.
+- Do not start the next integration until the previous merge is synchronized
+  locally and the previous branch is no longer needed.
 - Prefer small, focused changes that preserve the existing behavior.
 - Keep the server-side source in ESM JavaScript and browser code framework-free.
 - Use the existing SQLite schema and migration helpers when extending data.
