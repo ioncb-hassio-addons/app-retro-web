@@ -891,3 +891,48 @@ test("i18n dictionaries are split by language and have matching keys", () => {
   assert.deepEqual(Object.keys(spanish).sort(), Object.keys(english).sort());
   assert.ok(Object.keys(spanish).length > 100);
 });
+
+test("states cannot be saved or loaded before EmulatorJS starts", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "public", "app.js"),
+    "utf8",
+  );
+  assert.match(source, /async function uploadSaveState[\s\S]*stateBeforeStart/);
+  assert.match(
+    source,
+    /async function saveAutoStateForExit[\s\S]*stateBeforeStart/,
+  );
+  assert.match(source, /async function loadSaveState[\s\S]*stateBeforeStart/);
+  assert.match(
+    source,
+    /async function applySaveStateToRunningInstance[\s\S]*supportsStates[\s\S]*stateLoadFailed/,
+  );
+  assert.match(source, /deleteLocalSave/);
+});
+
+test("platform cards use transparent WebP logos", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const source = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");
+  const swSource = fs.readFileSync(path.join(publicDirectory, "sw.js"), "utf8");
+  const logoDirectory = path.join(publicDirectory, "platforms");
+  const logos = fs
+    .readdirSync(logoDirectory)
+    .filter((filename) => filename.endsWith(".webp"))
+    .sort();
+
+  assert.match(source, /function platformLogoUrl/);
+  assert.match(source, /gb:\s*"gbc"/);
+  assert.match(source, /platform-card-logo/);
+  assert.doesNotMatch(source, /platform-card-logo[^]*\.png/);
+  assert.deepEqual(logos, [
+    "arcade.webp",
+    "gba.webp",
+    "gbc.webp",
+    "n64.webp",
+    "nes.webp",
+    "snes.webp",
+  ]);
+  for (const logo of logos) {
+    assert.match(swSource, new RegExp(`platforms/${logo.replace(".", "\\.")}`));
+  }
+});

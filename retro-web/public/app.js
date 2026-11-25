@@ -5,6 +5,7 @@ import {
   clearProfileAssetKinds,
   clearCurrentGameSaves,
   clearProfileSaves,
+  deleteLocalSave,
   getCachedAsset,
   compatibleLocalSave,
   getLocalSave,
@@ -76,6 +77,19 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function platformLogoUrl(platform) {
+  const logos = {
+    arcade: "arcade",
+    nes: "nes",
+    snes: "snes",
+    gb: "gbc",
+    gba: "gba",
+    n64: "n64",
+  };
+  const logo = logos[String(platform || "").toLowerCase()];
+  return logo ? `./platforms/${logo}.webp` : null;
 }
 
 async function boot() {
@@ -376,8 +390,11 @@ async function renderLibrary() {
                      .map(
                        ([platform, count]) => `
                      <button class="platform-card" data-platform="${escapeHtml(platform)}">
-                       <strong>${escapeHtml(platformLabels.get(platform) || platform.toUpperCase())}</strong>
-                       <span>${tf(count === 1 ? "gameCount" : "gamesCount", { count })}</span>
+                       <img class="platform-card-logo" src="${escapeHtml(platformLogoUrl(platform))}" alt="${escapeHtml(platformLabels.get(platform) || platform.toUpperCase())}" loading="lazy" />
+                       <div class="platform-card-info">
+                         <strong>${escapeHtml(platformLabels.get(platform) || platform.toUpperCase())}</strong>
+                         <span>${tf(count === 1 ? "gameCount" : "gamesCount", { count })}</span>
+                       </div>
                      </button>`,
                      )
                      .join("")}</section>`
@@ -1078,6 +1095,11 @@ async function prepareInitialState(game) {
     }
   } catch (error) {
     console.warn("[Retro Web] Could not read the local state", error);
+    if (error.message === t("stateLoadFailed")) {
+      await deleteLocalSave(state.profileId, game.id, "state", slot).catch(
+        () => {},
+      );
+    }
   }
 
   let remote = null;
@@ -1148,6 +1170,9 @@ async function prepareInitialState(game) {
 }
 
 async function saveAutoStateForExit() {
+  if (!isEmulatorStarted()) {
+    throw new Error(t("stateBeforeStart"));
+  }
   const emulator = window.EJS_emulator;
   const manager = emulator?.gameManager;
   if (!manager) throw new Error("El emulador no está disponible");
@@ -1228,13 +1253,28 @@ async function applySaveStateToRunningInstance(buffer) {
   const emulator = window.EJS_emulator;
   const manager = emulator?.gameManager;
   if (!manager) throw new Error("El emulador no está disponible");
+  if (!isEmulatorStarted()) {
+    throw new Error(t("stateBeforeStart"));
+  }
+  if (
+    typeof manager.supportsStates === "function" &&
+    !manager.supportsStates()
+  ) {
+    throw new Error(t("stateUnsupported"));
+  }
   const state = new Uint8Array(buffer);
   if (!state.byteLength) throw new Error("El estado guardado está vacío");
-  manager.loadState(state);
-  initialStateApplied = true;
-  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
-  emulator.play?.(true);
-  toast(t("stateLoaded"));
+  try {
+    manager.loadState(state);
+    initialStateApplied = true;
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    emulator.play?.(true);
+    toast(t("stateLoaded"));
+  } catch (error) {
+    console.error("[Retro Web] State load failed", error);
+    emulator?.play?.(true);
+    throw new Error(t("stateLoadFailed"));
+  }
 }
 
 function selectedSlot() {
@@ -1246,12 +1286,20 @@ function isEmulatorStarted() {
 }
 
 async function uploadSaveState({ state: save }) {
+  if (!isEmulatorStarted()) {
+    toast(t("stateBeforeStart"), true);
+    return;
+  }
   await saveLocally("state", save);
   toast(t("stateSavedLocal"));
 }
 
 async function loadSaveState() {
   try {
+    if (!isEmulatorStarted()) {
+      toast(t("stateBeforeStart"), true);
+      return;
+    }
     const local = await getLocalSave(
       state.profileId,
       currentGameId,
@@ -1281,6 +1329,14 @@ async function loadSaveState() {
     initialStateApplied = false;
     await applySaveStateToRunningInstance(stateBuffer);
   } catch (error) {
+    if (error.message === t("stateLoadFailed")) {
+      await deleteLocalSave(
+        state.profileId,
+        currentGameId,
+        "state",
+        selectedSlot(),
+      ).catch(() => {});
+    }
     toast(error.message, true);
   }
 }
