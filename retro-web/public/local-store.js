@@ -130,12 +130,33 @@ export async function getStorageUsage(profileId) {
     (total, record) => total + (record.size || record.blob?.size || 0),
     0,
   );
+  const romAssets = assets
+    .filter((record) => record.kind === "rom")
+    .reduce(
+      (total, record) => total + (record.size || record.blob?.size || 0),
+      0,
+    );
+  const biosAssets = assets
+    .filter((record) => record.kind === "bios")
+    .reduce(
+      (total, record) => total + (record.size || record.blob?.size || 0),
+      0,
+    );
+  const coverAssets = assets
+    .filter((record) => record.kind === "cover")
+    .reduce(
+      (total, record) => total + (record.size || record.blob?.size || 0),
+      0,
+    );
   const savesBytes = saves.reduce(
     (total, record) => total + (record.size || record.blob?.size || 0),
     0,
   );
   return {
     assets: assetsBytes,
+    romAssets,
+    biosAssets,
+    coverAssets,
     saves: savesBytes,
     total: assetsBytes + savesBytes,
   };
@@ -143,6 +164,14 @@ export async function getStorageUsage(profileId) {
 
 export async function clearProfileAssets(profileId) {
   await deleteByProfile("assets", profileId);
+}
+
+export async function clearProfileAssetKinds(profileId, kinds) {
+  await deleteAssetsByKinds(profileId, kinds);
+}
+
+export async function clearCurrentGameSaves(profileId, gameId) {
+  await deleteSavesByGame(profileId, gameId);
 }
 
 export async function clearProfileSaves(profileId) {
@@ -179,6 +208,62 @@ async function deleteByProfile(storeName, profileId) {
       cursor.continue();
     };
   });
+}
+
+async function deleteAssetsByKinds(profileId, kinds) {
+  const db = await openDatabase();
+  const transaction = db.transaction("assets", "readwrite");
+  const index = transaction.objectStore("assets").index("profileId");
+  const kindSet = new Set(kinds);
+  const request = index.openCursor(IDBKeyRange.only(profileId));
+  await new Promise((resolve, reject) => {
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        resolve();
+        return;
+      }
+      if (kindSet.has(cursor.value.kind)) cursor.delete();
+      cursor.continue();
+    };
+  });
+}
+
+async function deleteSavesByGame(profileId, gameId) {
+  const db = await openDatabase();
+  const transaction = db.transaction(["saves", "metadata"], "readwrite");
+
+  const savesIndex = transaction.objectStore("saves").index("profileId");
+  const savesRequest = savesIndex.openCursor(IDBKeyRange.only(profileId));
+  await new Promise((resolve, reject) => {
+    savesRequest.onerror = () => reject(savesRequest.error);
+    savesRequest.onsuccess = () => {
+      const cursor = savesRequest.result;
+      if (!cursor) {
+        resolve();
+        return;
+      }
+      if (cursor.value.gameId === gameId) cursor.delete();
+      cursor.continue();
+    };
+  });
+
+  const metadataIndex = transaction.objectStore("metadata").index("profileId");
+  const metadataRequest = metadataIndex.openCursor(IDBKeyRange.only(profileId));
+  await new Promise((resolve, reject) => {
+    metadataRequest.onerror = () => reject(metadataRequest.error);
+    metadataRequest.onsuccess = () => {
+      const cursor = metadataRequest.result;
+      if (!cursor) {
+        resolve();
+        return;
+      }
+      if (cursor.value.gameId === gameId) cursor.delete();
+      cursor.continue();
+    };
+  });
+  await transactionComplete(transaction);
 }
 
 async function get(storeName, key) {

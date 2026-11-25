@@ -2,6 +2,8 @@ import { detectLocale, getLocale, setLocale, t, tf } from "./i18n.js";
 import {
   cacheAsset,
   clearProfileAssets,
+  clearProfileAssetKinds,
+  clearCurrentGameSaves,
   clearProfileSaves,
   getCachedAsset,
   compatibleLocalSave,
@@ -877,7 +879,15 @@ let emulatorHasStarted = false;
 const runtimeBlobUrls = new Set();
 const coverBlobUrls = new Set();
 
-function showConfirmDialog({ title, message, primary, secondary, cancel }) {
+function showConfirmDialog({
+  title,
+  message,
+  details = [],
+  actions = [],
+  primary,
+  secondary,
+  cancel,
+}) {
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
     dialog.className = "retro-dialog";
@@ -885,7 +895,27 @@ function showConfirmDialog({ title, message, primary, secondary, cancel }) {
       <form method="dialog">
         <h2>${escapeHtml(title)}</h2>
         <p>${escapeHtml(message)}</p>
+        ${
+          details.length
+            ? `<dl class="dialog-details">${details
+                .map(
+                  ([label, value]) =>
+                    `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`,
+                )
+                .join("")}</dl>`
+            : ""
+        }
         <div class="dialog-actions">
+          ${
+            actions.length
+              ? `<div class="dialog-action-grid">${actions
+                  .map(
+                    (action) =>
+                      `<button class="secondary" value="${escapeHtml(action.id)}"${action.disabled ? " disabled" : ""}>${escapeHtml(action.label)}</button>`,
+                  )
+                  .join("")}</div>`
+              : ""
+          }
           ${
             primary
               ? `<button class="primary" value="primary">${escapeHtml(primary)}</button>`
@@ -1457,18 +1487,27 @@ async function uploadLocalSaveIfConfirmed(local, game) {
     if (error.status !== 404) throw error;
   }
   if (remote?.hash === local.hash) return false;
-  if (
-    remote &&
-    !window.confirm(
-      [
-        t("syncConflict"),
-        `${t("serverSave")}: ${remote.updatedAt}`,
-        `${t("localSave")}: ${new Date(local.updatedAt).toISOString()}`,
-        t("replaceServerSave"),
-      ].join("\n"),
-    )
-  ) {
-    return false;
+  if (remote) {
+    const choice = await showConfirmDialog({
+      title: t("syncConflict"),
+      message: t("replaceServerSave"),
+      details: [
+        [t("serverSave"), remote.updatedAt],
+        [t("localSave"), new Date(local.updatedAt).toISOString()],
+        [
+          "Tipo",
+          local.kind === "state"
+            ? "State"
+            : getLocale() === "en"
+              ? "Native save"
+              : "Guardado nativo",
+        ],
+        ["Slot", String(local.slot)],
+      ],
+      primary: t("replaceServerSaveAction"),
+      cancel: t("cancel"),
+    });
+    if (choice !== "primary") return false;
   }
   await uploadChunkedSave(local, game, remote?.hash || "none");
   return true;
@@ -1514,22 +1553,100 @@ async function uploadChunkedSave(local, game, ifMatchSaveHash) {
 async function manageLocalStorage() {
   try {
     const usage = await getStorageUsage(state.profileId);
-    const message = [
-      `${t("localAssets")}: ${formatBytes(usage.assets)}`,
-      `${t("localSaves")}: ${formatBytes(usage.saves)}`,
-      `${t("totalLocalStorage")}: ${formatBytes(usage.total)}`,
-      "",
-      t("clearLocalAssetsQuestion"),
-    ].join("\n");
-    if (window.confirm(message)) {
-      await clearProfileAssets(state.profileId);
+    const currentGameSaves = currentGameId
+      ? await listLocalSaves(state.profileId, currentGameId)
+      : [];
+    const currentGameSaveBytes = currentGameSaves.reduce(
+      (total, save) => total + (save.size || save.blob?.size || 0),
+      0,
+    );
+    const actions = [
+      {
+        id: "roms",
+        label: t("clearRomsAction"),
+        disabled: usage.romAssets === 0,
+      },
+      {
+        id: "bios",
+        label: t("clearBiosAction"),
+        disabled: usage.biosAssets === 0,
+      },
+      {
+        id: "save",
+        label: t("clearCurrentSaveAction"),
+        disabled: !currentGameId || currentGameSaveBytes === 0,
+      },
+      {
+        id: "saves",
+        label: t("clearSavesAction"),
+        disabled: usage.saves === 0,
+      },
+    ];
+    const choice = await showConfirmDialog({
+      title: t("localStorage"),
+      message: t("cachedResourcesCurrently"),
+      details: [
+        [t("roms"), formatBytes(usage.romAssets)],
+        [t("bios"), formatBytes(usage.biosAssets)],
+        [t("currentSave"), formatBytes(currentGameSaveBytes)],
+        [t("localSaves"), formatBytes(usage.saves)],
+        [t("totalLocalStorage"), formatBytes(usage.total)],
+      ],
+      actions,
+      cancel: t("cancel"),
+    });
+    if (!choice || choice === "cancel") return;
+
+    let confirmationMessage = "";
+    if (choice === "roms") {
+      confirmationMessage = t("clearRomsConfirm");
+    } else if (choice === "bios") {
+      confirmationMessage = t("clearBiosConfirm");
+    } else if (choice === "save") {
+      confirmationMessage = t("clearCurrentSaveConfirm");
+    } else if (choice === "saves") {
+      confirmationMessage = t("clearSavesConfirm");
+    }
+
+    const confirmed = await showConfirmDialog({
+      title: t("confirmAction"),
+      message: confirmationMessage,
+      primary: t("yes"),
+      cancel: t("no"),
+    });
+    if (confirmed !== "primary") return;
+
+    if (choice === "roms") {
+      await clearProfileAssetKinds(state.profileId, ["rom"]);
       await releaseRuntimeBlobUrls();
       assetsCacheCleared = true;
-      await teardownEmulatorForAssetReset();
-      await loadLibrary();
+      if (isEmulatorStarted()) {
+        await teardownEmulatorForAssetReset();
+        await loadLibrary();
+      }
       toast(t("localAssetsCleared"));
-    }
-    if (usage.saves && window.confirm(t("clearLocalSavesQuestion"))) {
+    } else if (choice === "bios") {
+      await clearProfileAssetKinds(state.profileId, ["bios"]);
+      await releaseRuntimeBlobUrls();
+      assetsCacheCleared = true;
+      try {
+        await Promise.all(
+          ["retro-web-emulator-v3", "retro-web-emulator-v2"].map((name) =>
+            caches.delete(name),
+          ),
+        );
+      } catch (error) {
+        console.warn("[Retro Web] Emulator asset cache clear failed", error);
+      }
+      if (isEmulatorStarted()) {
+        await teardownEmulatorForAssetReset();
+        await loadLibrary();
+      }
+      toast(t("localAssetsCleared"));
+    } else if (choice === "save") {
+      await clearCurrentGameSaves(state.profileId, currentGameId);
+      toast(t("localSavesCleared"));
+    } else if (choice === "saves") {
       await clearProfileSaves(state.profileId);
       toast(t("localSavesCleared"));
     }

@@ -834,3 +834,41 @@ test("exit before EmulatorJS starts goes directly to the library", () => {
   );
   assert.doesNotMatch(source, /romset\|missing\|failed\|error\|desconocido/i);
 });
+
+test("storage and save sync use the shared retro dialog", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "public", "app.js"),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /window\.confirm/);
+  assert.match(
+    source,
+    /async function manageLocalStorage[\s\S]*showConfirmDialog/,
+  );
+  assert.match(
+    source,
+    /async function uploadLocalSaveIfConfirmed[\s\S]*showConfirmDialog/,
+  );
+  assert.match(source, /dialog-details/);
+  assert.doesNotMatch(
+    source,
+    /primary:\s*t\("(clearLocalAssetsQuestion|clearLocalSavesQuestion|replaceServerSave)"\)/,
+  );
+  assert.match(source, /primary:\s*t\("replaceServerSaveAction"\)/);
+});
+
+test("unified local storage dialog exposes separate cleanup actions", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "public", "app.js"),
+    "utf8",
+  );
+  assert.match(source, /id:\s*"roms"/);
+  assert.match(source, /id:\s*"bios"/);
+  assert.match(source, /id:\s*"save"/);
+  assert.match(source, /id:\s*"saves"/);
+  assert.match(source, /clearProfileAssetKinds/);
+  assert.match(source, /clearCurrentGameSaves/);
+  assert.match(source, /clearProfileSaves/);
+  assert.match(source, /primary:\s*t\("yes"\)/);
+  assert.match(source, /cancel:\s*t\("no"\)/);
+});
