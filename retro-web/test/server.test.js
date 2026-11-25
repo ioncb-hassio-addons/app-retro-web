@@ -11,6 +11,14 @@ import { normalizeTitle, titleFromFilename } from "../app/titles.js";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { loadOrCreateSelfSignedCertificate, resolveTls } from "../app/tls.js";
+import {
+  buildCoverCandidates,
+  crc32Buffer,
+  createIndexWorker,
+  hashFile,
+} from "../app/indexer.js";
+import { compatibleLocalSave } from "../public/local-store.js";
+import { createLogger } from "../app/logger.js";
 
 async function setup() {
   const dataPath = fs.mkdtempSync(path.join(os.tmpdir(), "retro-web-test-"));
@@ -176,12 +184,28 @@ test("ROM uploads, BIOS uploads, and profile saves are isolated", async () => {
       ),
     );
     assert.equal(manifest.filename, "bios.bin");
+    assert.equal(
+      manifest.hash,
+      createHash("sha256")
+        .update(
+          fs.readFileSync(
+            path.join(fixture.dataPath, "bios", "n64", "bios.bin"),
+          ),
+        )
+        .digest("hex"),
+    );
 
     const biosDownload = await fetch(
       `${fixture.ingress.base}/api/games/${game.id}/bios/${manifest.filename}`,
       { headers: { "x-profile-id": firstProfile.id } },
     );
     assert.equal(biosDownload.status, 200);
+    assert.equal(
+      createHash("sha256")
+        .update(Buffer.from(await biosDownload.arrayBuffer()))
+        .digest("hex"),
+      manifest.hash,
+    );
 
     const firstSave = await fetch(
       `${fixture.ingress.base}/api/games/${game.id}/saves/state/1`,
@@ -531,6 +555,107 @@ test("large save states can be synchronized in chunks", async () => {
   }
 });
 
+test("manual ROM index detects new, changed, and deleted files", async () => {
+  const dataPath = fs.mkdtempSync(path.join(os.tmpdir(), "retro-web-index-"));
+  ensureStorage(dataPath);
+  const db = createDatabase(dataPath);
+  const romDirectory = path.join(dataPath, "roms", "nes");
+  fs.mkdirSync(romDirectory, { recursive: true });
+  const romPath = path.join(romDirectory, "Test_Game.nes");
+  fs.writeFileSync(romPath, "abcd");
+  const biosDirectory = path.join(dataPath, "bios", "arcade");
+  fs.mkdirSync(biosDirectory, { recursive: true });
+  const biosPath = path.join(biosDirectory, "neogeo.zip");
+  fs.writeFileSync(biosPath, "bios-data");
+
+  const worker = createIndexWorker({
+    config: { dataPath, enable_cover_indexing: false },
+    db,
+  });
+  try {
+    const first = await worker.runNow();
+    assert.equal(first.new_files, 2);
+    assert.equal(first.changed_files, 0);
+    const indexed = db
+      .prepare("SELECT sha1,crc32,version FROM indexed_files WHERE kind='rom'")
+      .get();
+    const biosManifest = JSON.parse(
+      fs.readFileSync(path.join(biosDirectory, "manifest.json"), "utf8"),
+    );
+    assert.equal(
+      biosManifest.hash,
+      createHash("sha256").update(fs.readFileSync(biosPath)).digest("hex"),
+    );
+    assert.equal(indexed.sha1, (await hashFile(romPath)).sha1);
+    assert.equal(indexed.crc32, crc32Buffer(Buffer.from("abcd")));
+    assert.equal(indexed.version, 1);
+
+    fs.writeFileSync(romPath, "efgh");
+    const changed = await worker.runNow();
+    assert.equal(changed.changed_files, 1);
+    const changedRow = db
+      .prepare("SELECT sha1,version FROM indexed_files WHERE kind='rom'")
+      .get();
+    assert.equal(changedRow.version, 2);
+    assert.notEqual(changedRow.sha1, indexed.sha1);
+
+    fs.rmSync(romPath);
+    const deleted = await worker.runNow();
+    assert.equal(deleted.deleted_files, 1);
+    const game = db.prepare("SELECT deleted_at FROM games").get();
+    assert.ok(game.deleted_at);
+  } finally {
+    db.close();
+    fs.rmSync(dataPath, { recursive: true, force: true });
+  }
+});
+
+test("cover candidates follow official name, full name, and prefixes", () => {
+  assert.deepEqual(
+    buildCoverCandidates("Street Fighter 3 3rd Strike", "Street Fighter III"),
+    [
+      "Street Fighter III",
+      "Street Fighter 3 3rd Strike",
+      "Street Fighter 3 3rd",
+      "Street Fighter 3",
+      "Street Fighter",
+      "Street",
+    ],
+  );
+});
+
+test("local state compatibility requires core, ROM, and emulator version", () => {
+  const game = {
+    core: "fbneo",
+    hash: "rom-hash",
+    emulatorVersion: "4.2.3",
+  };
+  assert.equal(
+    compatibleLocalSave(
+      {
+        blob: new Blob(["state"]),
+        core: "fbneo",
+        romHash: "rom-hash",
+        emulatorVersion: "4.2.3",
+      },
+      game,
+    ),
+    true,
+  );
+  assert.equal(
+    compatibleLocalSave(
+      {
+        blob: new Blob(["state"]),
+        core: "fceumm",
+        romHash: "rom-hash",
+        emulatorVersion: "4.2.3",
+      },
+      game,
+    ),
+    false,
+  );
+});
+
 test(
   "TLS resolves and reuses a persistent self-signed certificate",
   {
@@ -570,4 +695,62 @@ test("TLS rejects unsafe Home Assistant certificate filenames", () => {
     keyfile: "privkey.pem",
   };
   assert.throws(() => resolveTls(config), /Invalid SSL filename/);
+});
+
+test("logger uses Home Assistant timestamp format and respects log level", () => {
+  const originalLog = console.log;
+  const messages = [];
+  console.log = (message) => messages.push(message);
+  try {
+    const logger = createLogger({ log_level: "warning" });
+    logger.info("Mensaje oculto");
+    logger.warning("Mensaje visible");
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(messages.length, 0);
+
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (message) => warnings.push(message);
+  try {
+    createLogger({ log_level: "warning" }).warning("Estado indexado");
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.match(warnings[0], /^\[\d{2}:\d{2}:\d{2}\] WARNING: Estado indexado$/);
+
+  const originalInfo = console.log;
+  const infos = [];
+  console.log = (message) => infos.push(message);
+  try {
+    createLogger({ log_level: "info" }).info("Worker iniciado", {
+      newFiles: 2,
+    });
+  } finally {
+    console.log = originalInfo;
+  }
+  assert.match(
+    infos[0],
+    /^\[\d{2}:\d{2}:\d{2}\] INFO: Worker iniciado newFiles=2$/,
+  );
+});
+
+test("service worker clones network responses before cache writes", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "public", "sw.js"),
+    "utf8",
+  );
+  assert.match(source, /const responseForCache = response\.clone\(\)/);
+  assert.doesNotMatch(source, /cache\.put\(request,\s*response\)/);
+});
+
+test("cover hydration updates every duplicate game card", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "public", "app.js"),
+    "utf8",
+  );
+  assert.match(source, /querySelectorAll\("\[data-cover-game\]"\)/);
+  assert.match(source, /for \(const image of images\)/);
+  assert.doesNotMatch(source, /document\.querySelector\(`\[data-cover-game=/);
 });

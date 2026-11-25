@@ -60,6 +60,9 @@ The asset script copies the installed EmulatorJS package into
 - Saves are profile-specific and validated with core, emulator, and ROM hashes.
 - Save states use chunked transfer for files larger than Home Assistant Ingress
   limits.
+- Node logs use a Home Assistant-compatible `[HH:mm:ss] LEVEL: message` format.
+  Use `app/logger.js`; it respects `log_level`. Shell startup logs continue to
+  use `bashio::log.*`.
 
 ## Home Assistant configuration
 
@@ -87,6 +90,17 @@ For Arcade troubleshooting, distinguish:
 
 Do not claim that arbitrary files from MAME/MAME4droid versions are compatible.
 FBNeo ROMsets must match the FBNeo revision shipped by EmulatorJS.
+
+## Current library and index work
+
+- State loading checks slot `1` in IndexedDB before querying the server.
+- Loading a state restarts the EmulatorJS instance without `location.reload()`.
+- The library separates continue-playing, recently added, and platform views.
+- Manual indexing scans `/data/roms/<platform>/` and
+  `/data/bios/<platform>/`.
+- The worker stores SHA-1, CRC32, versions, deletion state, and run status.
+- Cover lookup is server-side and follows DAT hash, full-name, and prefix
+  fallbacks in that order.
 
 ## Before completing changes
 

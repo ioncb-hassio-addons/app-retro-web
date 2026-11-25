@@ -91,6 +91,15 @@ export async function getLocalSave(profileId, gameId, kind, slot) {
   return get("saves", saveKey(profileId, gameId, kind, slot));
 }
 
+export function compatibleLocalSave(save, game) {
+  return (
+    save?.blob &&
+    save.core === game?.core &&
+    save.romHash === game?.hash &&
+    save.emulatorVersion === game?.emulatorVersion
+  );
+}
+
 export async function listLocalSaves(profileId, gameId) {
   const db = await openDatabase();
   return transactionResult(

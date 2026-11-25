@@ -33,15 +33,20 @@ import {
 } from "./session.js";
 import { normalizeTitle } from "./titles.js";
 import { resolveTls } from "./tls.js";
+import { createIndexWorker } from "./indexer.js";
+import { createLogger } from "./logger.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicRoot = path.join(root, "public");
 const emulatorManifest = loadEmulatorManifest();
 
-export function createRetroApp(config, db, mode) {
+export function createRetroApp(config, db, mode, indexWorker = null) {
   const app = express();
   app.locals.db = db;
   app.locals.mode = mode;
+  const logger = createLogger(config);
+  const romIndexWorker = indexWorker || createIndexWorker({ config, db });
+  app.locals.indexWorker = romIndexWorker;
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
   app.use(
@@ -277,6 +282,22 @@ export function createRetroApp(config, db, mode) {
         : null,
       biosUrl: game.bios_system ? biosUrlForGame(config.dataPath, game) : null,
     });
+  });
+
+  app.post("/api/games/:gameId/progress", (request, response) => {
+    const profileId = activeProfileId(request, response, db, mode);
+    if (!profileId) return;
+    const game = getGame(db, request.params.gameId);
+    if (!game) {
+      response.status(404).json({ error: "Game not found" });
+      return;
+    }
+    db.prepare(
+      `INSERT INTO progress (profile_id, game_id, favorite, last_played)
+       VALUES (?, ?, 0, ?)
+       ON CONFLICT(profile_id, game_id) DO UPDATE SET last_played = excluded.last_played`,
+    ).run(profileId, game.id, new Date().toISOString());
+    response.status(204).end();
   });
 
   app.get("/api/games/:gameId/cover", (request, response) => {
@@ -713,7 +734,7 @@ export function createRetroApp(config, db, mode) {
     response.sendFile(path.join(publicRoot, "index.html"));
   });
   app.use((error, _request, response, _next) => {
-    console.error(error);
+    logger.error("Error al procesar una solicitud", error);
     response.status(500).json({ error: "Retro Web request failed" });
   });
 
@@ -721,6 +742,19 @@ export function createRetroApp(config, db, mode) {
 }
 
 function mountAdminRoutes(app, config, db, upload) {
+  app.get("/api/admin/index/status", (_request, response) => {
+    response.json(app.locals.indexWorker.getStatus());
+  });
+
+  app.post("/api/admin/index/run", async (_request, response) => {
+    try {
+      const status = await app.locals.indexWorker.runNow();
+      response.status(200).json(status);
+    } catch (error) {
+      response.status(error.status || 500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/admin/platforms", (_request, response) => {
     const result = Object.entries(platforms).map(([id, platform]) => ({
       id,
@@ -1087,7 +1121,9 @@ function activeProfileId(request, response, db, mode) {
 }
 
 function getGame(db, gameId) {
-  return db.prepare("SELECT * FROM games WHERE id = ?").get(gameId);
+  return db
+    .prepare("SELECT * FROM games WHERE id = ? AND deleted_at IS NULL")
+    .get(gameId);
 }
 
 function storeCover(config, db, game, buffer, mime, source, sourceName) {
@@ -1120,7 +1156,13 @@ function readBiosManifest(dataPath, system) {
   const manifestPath = path.join(dataPath, "bios", system, "manifest.json");
   if (!fs.existsSync(manifestPath)) return null;
   try {
-    return JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const biosPath = path.join(dataPath, "bios", system, manifest.filename);
+    if (!manifest.filename || !fs.existsSync(biosPath)) return manifest;
+    return {
+      ...manifest,
+      hash: sha256File(biosPath),
+    };
   } catch {
     return null;
   }
@@ -1306,13 +1348,15 @@ function loadEmulatorManifest() {
 
 export function start() {
   const config = loadConfig();
+  const logger = createLogger(config);
   ensureStorage(config.dataPath);
   const db = createDatabase(config.dataPath);
-  const ingressApp = createRetroApp(config, db, "ingress");
+  const indexWorker = createIndexWorker({ config, db });
+  const ingressApp = createRetroApp(config, db, "ingress", indexWorker);
   const ingressServer = ingressApp.listen(config.internalPort, "0.0.0.0");
   let externalServer;
   if (config.external_access) {
-    const externalApp = createRetroApp(config, db, "external");
+    const externalApp = createRetroApp(config, db, "external", indexWorker);
     const tls = resolveTls(config);
     externalServer = tls
       ? https
@@ -1321,14 +1365,28 @@ export function start() {
       : externalApp.listen(config.externalPort, "0.0.0.0");
   }
 
+  void indexWorker.runNow().catch((error) => {
+    logger.error("Fallo la indexación automática", error);
+  });
+  const indexInterval = setInterval(
+    () => {
+      void indexWorker.runNow().catch((error) => {
+        logger.error("Fallo la indexación automática", error);
+      });
+    },
+    config.rom_index_interval_minutes * 60 * 1000,
+  );
+  indexInterval.unref();
+
   const shutdown = () => {
+    clearInterval(indexInterval);
     ingressServer.close();
     externalServer?.close();
     db.close();
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
-  console.log(
+  logger.info(
     `Retro Web listening on ingress port ${config.internalPort}${
       externalServer ? ` and external port ${config.externalPort}` : ""
     }`,

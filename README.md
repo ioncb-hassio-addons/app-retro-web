@@ -18,7 +18,7 @@ save states stored by profile on the server.
 
 It provides:
 
-- Netflix-style local profiles.
+- Local profiles.
 - NES, SNES, Game Boy/Color, Game Boy Advance, Nintendo 64, and Arcade.
 - ROM and BIOS administration through Home Assistant Ingress.
 - Per-profile native saves and save states.
