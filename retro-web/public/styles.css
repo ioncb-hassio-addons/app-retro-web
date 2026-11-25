@@ -235,6 +235,43 @@ button {
   font-size: 0.85rem;
 }
 
+.breadcrumb-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin: -1.25rem 0 1.5rem;
+  padding: 0.65rem 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.breadcrumb-link {
+  padding: 0.25rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--primary);
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.breadcrumb-link:hover,
+.breadcrumb-link:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 0.25rem;
+  outline: none;
+}
+
+.breadcrumb-separator {
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.breadcrumb-current {
+  color: #f7f8ff;
+  font-weight: 700;
+}
+
 .game-card {
   display: grid;
   grid-template-rows: 170px minmax(0, 1fr);

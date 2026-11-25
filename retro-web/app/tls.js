@@ -28,7 +28,7 @@ export function loadHomeAssistantCertificate(config) {
     const cert = fs.readFileSync(certPath);
     const key = fs.readFileSync(keyPath);
     validateCertificatePair(cert, key);
-    logger.info("TLS: usando certificado de Home Assistant", {
+    logger.info("TLS: using Home Assistant certificate", {
       certPath,
       keyPath,
     });
@@ -56,7 +56,7 @@ export function loadOrCreateSelfSignedCertificate(config) {
         fs.readFileSync(certPath),
         fs.readFileSync(keyPath),
       );
-      logger.info("TLS: reutilizando certificado autofirmado", {
+      logger.info("TLS: reusing self-signed certificate", {
         certPath,
         keyPath,
       });
@@ -79,7 +79,7 @@ export function loadOrCreateSelfSignedCertificate(config) {
       safeDnsName(config.tls_self_signed_common_name) || "retro-web.local",
     days: Number(config.tls_self_signed_days || 365),
   });
-  logger.info("TLS: certificado autofirmado generado", {
+  logger.info("TLS: self-signed certificate generated", {
     certPath,
     keyPath,
   });

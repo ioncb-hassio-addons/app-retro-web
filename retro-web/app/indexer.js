@@ -42,8 +42,8 @@ export function createIndexWorker({ config, db }) {
 
   async function runNow() {
     if (running) {
-      logger.warning("Indexación ya está en ejecución");
-      const error = new Error("La indexación ya está en ejecución");
+      logger.warning("Indexing is already running");
+      const error = new Error("Indexing is already running");
       error.status = 409;
       throw error;
     }
@@ -58,7 +58,7 @@ export function createIndexWorker({ config, db }) {
   async function indexFiles() {
     const startedAt = new Date().toISOString();
     const startedMs = Date.now();
-    logger.info("Indexación de ROM y BIOS iniciada");
+    logger.info("ROM and BIOS indexing started");
     const run = db
       .prepare(
         `INSERT INTO index_runs
@@ -74,11 +74,11 @@ export function createIndexWorker({ config, db }) {
     };
     const errors = [];
     try {
-      logger.info("Escaneando directorio ROM");
+      logger.info("Scanning ROM directory");
       await scanRoms(counters, errors);
-      logger.info("Escaneando directorio BIOS");
+      logger.info("Scanning BIOS directory");
       await scanBios(counters, errors);
-      logger.info("Buscando carátulas faltantes");
+      logger.info("Looking for missing covers");
       await indexMissingCovers();
       const durationMs = Date.now() - startedMs;
       db.prepare(
@@ -98,7 +98,7 @@ export function createIndexWorker({ config, db }) {
         Number(run.lastInsertRowid),
       );
       status = readLatestRun(db);
-      logger.info("Indexación completada", {
+      logger.info("Indexing completed", {
         durationMs,
         newFiles: counters.newFiles,
         changedFiles: counters.changedFiles,
@@ -125,7 +125,7 @@ export function createIndexWorker({ config, db }) {
         Number(run.lastInsertRowid),
       );
       status = readLatestRun(db);
-      logger.error("Indexación fallida", {
+      logger.error("Indexing failed", {
         durationMs,
         errorFiles: counters.errors + 1,
         error: error.message,
@@ -143,7 +143,7 @@ export function createIndexWorker({ config, db }) {
       const platformId = platform.name;
       const definition = platforms[platformId];
       if (!definition) continue;
-      logger.debug("Indexando plataforma ROM", { platform: platformId });
+      logger.debug("Indexing ROM platform", { platform: platformId });
       const platformRoot = path.join(romRoot, platformId);
       const files = fs
         .readdirSync(platformRoot, { withFileTypes: true })
@@ -165,7 +165,7 @@ export function createIndexWorker({ config, db }) {
         } catch (error) {
           counters.errors += 1;
           errors.push(`${filePath}: ${error.message}`);
-          logger.error("No se pudo indexar ROM", {
+          logger.error("Could not index ROM", {
             platform: platformId,
             file: entry.name,
             error: error.message,
@@ -183,7 +183,7 @@ export function createIndexWorker({ config, db }) {
     for (const platform of fs.readdirSync(biosRoot, { withFileTypes: true })) {
       if (!platform.isDirectory()) continue;
       const platformId = platform.name;
-      logger.debug("Indexando plataforma BIOS", { platform: platformId });
+      logger.debug("Indexing BIOS platform", { platform: platformId });
       const platformRoot = path.join(biosRoot, platformId);
       const files = fs
         .readdirSync(platformRoot, { withFileTypes: true })
@@ -209,7 +209,7 @@ export function createIndexWorker({ config, db }) {
         } catch (error) {
           counters.errors += 1;
           errors.push(`${filePath}: ${error.message}`);
-          logger.error("No se pudo indexar BIOS", {
+          logger.error("Could not index BIOS", {
             platform: platformId,
             file: entry.name,
             error: error.message,
@@ -309,7 +309,7 @@ export function createIndexWorker({ config, db }) {
         existing.id,
       );
       counters.changedFiles += 1;
-      logger.info("ROM actualizada", {
+      logger.info("ROM updated", {
         platform: platformId,
         file: filename,
         version,
@@ -335,7 +335,7 @@ export function createIndexWorker({ config, db }) {
         new Date().toISOString(),
       );
       counters.newFiles += 1;
-      logger.info("ROM nueva indexada", {
+      logger.info("New ROM indexed", {
         platform: platformId,
         file: filename,
         sha1: hashes.sha1,
@@ -415,7 +415,7 @@ export function createIndexWorker({ config, db }) {
         existing.id,
       );
       counters.changedFiles += 1;
-      logger.info("BIOS actualizada", {
+      logger.info("BIOS updated", {
         platform: platformId,
         file: filename,
         version,
@@ -442,7 +442,7 @@ export function createIndexWorker({ config, db }) {
         new Date().toISOString(),
       );
       counters.newFiles += 1;
-      logger.info("BIOS nueva indexada", {
+      logger.info("New BIOS indexed", {
         platform: platformId,
         file: filename,
         sha1: hashes.sha1,
@@ -532,7 +532,7 @@ export function createIndexWorker({ config, db }) {
         );
       }
       counters.deletedFiles += 1;
-      logger.info("Archivo eliminado", {
+      logger.info("File deleted", {
         kind,
         platform: row.platform,
         file: row.filename,
@@ -551,7 +551,7 @@ export function createIndexWorker({ config, db }) {
                 OR cover_attempted_at <= ?)`,
       )
       .all(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
-    logger.debug("Carátulas pendientes", { count: rows.length });
+    logger.debug("Pending covers", { count: rows.length });
     const batchSize = 2;
     for (let index = 0; index < rows.length; index += batchSize) {
       await Promise.all(
@@ -611,14 +611,14 @@ export function createIndexWorker({ config, db }) {
           new Date().toISOString(),
           game.id,
         );
-        logger.info("Carátula encontrada", {
+        logger.info("Cover found", {
           platform: game.platform,
           game: game.title,
           sourceName: candidate,
         });
         return;
       } catch {
-        logger.debug("Intento de carátula fallido", {
+        logger.debug("Cover attempt failed", {
           platform: game.platform,
           game: game.title,
           candidate,
@@ -626,7 +626,7 @@ export function createIndexWorker({ config, db }) {
         continue;
       }
     }
-    logger.warning("No se encontró carátula", {
+    logger.warning("Cover not found", {
       platform: game.platform,
       game: game.title,
     });
