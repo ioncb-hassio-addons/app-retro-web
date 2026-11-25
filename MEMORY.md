@@ -2,6 +2,8 @@
 
 ## Stable facts
 
+- Git workflow: every new integration or change starts on a dedicated branch
+  using `feature/`, `fix/`, or another appropriate prefix.
 - Repository: `ioncb-hassio-addons/app-retro-web`.
 - Main app source: `retro-web/`.
 - Application name: `Retro Web`.
@@ -25,8 +27,8 @@
 - Added IndexedDB caching for browser assets and profile saves.
 - Added chunked save synchronization to work around the 16 MiB Ingress body
   limit.
-- Fixed save states to reload the emulator instead of injecting state into a
-  running WASM core.
+- Fixed save-state loading to apply state to the running WASM core instead of
+  destroying and recreating the EmulatorJS instance.
 - Added service-worker caching for EmulatorJS assets.
 - Added TLS modes:
   - `ssl: false`: persistent self-signed certificate.
@@ -68,6 +70,8 @@ The project now includes implemented work for:
 - manual ROM/BIOS folder indexing;
 - SHA-1, CRC32, versions, deletion tracking, and manual reindex endpoints;
 - strict Libretro cover lookup sequence.
+- Initial state lookup prioritizes a compatible local state, then compares the
+  server state hash and timestamp before offering it in the server dialog.
 
 A next model should verify real browser behavior, Docker builds, and Indexer
 runtime behavior. Commit or push only after explicit user approval unless the
