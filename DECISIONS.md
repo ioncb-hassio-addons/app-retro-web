@@ -82,3 +82,20 @@ translations, and runtime defaults synchronized.
 Before merging, run Prettier and Node tests. Validate real HTTPS separately
 inside Docker or a Home Assistant environment. Docker builds should cover both
 AMD64 and ARM64.
+
+## ADR-011: Implement state loading without page reload
+
+Save states load in the existing EmulatorJS instance lifecycle. The browser
+checks IndexedDB before querying the server. Server state remains untouched
+until the user chooses. Restarting uses an EmulatorJS instance cleanup/recreate
+cycle and never calls `location.reload()`.
+
+## ADR-012: Index manually mounted media
+
+ROM and BIOS files can be placed in `/data/roms/<platform>/` and
+`/data/bios/<platform>/`. The worker calculates SHA-1 and CRC32, optimizes
+unchanged files using size and modification time, increments versions on
+content changes, and marks deleted entries.
+
+Manual reindex endpoints are protected by existing Ingress/admin or elevated
+external-admin authorization.

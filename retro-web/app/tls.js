@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import tls from "node:tls";
 import { spawnSync } from "node:child_process";
+import { createLogger } from "./logger.js";
 
 const allowedCertificateName = /^[A-Za-z0-9._-]{1,160}$/;
 
@@ -13,6 +14,7 @@ export function resolveTls(config) {
 }
 
 export function loadHomeAssistantCertificate(config) {
+  const logger = createLogger(config);
   const certName = safeFileName(config.certfile, "fullchain.pem");
   const keyName = safeFileName(config.keyfile, "privkey.pem");
   const certPath = path.join("/ssl", certName);
@@ -26,9 +28,10 @@ export function loadHomeAssistantCertificate(config) {
     const cert = fs.readFileSync(certPath);
     const key = fs.readFileSync(keyPath);
     validateCertificatePair(cert, key);
-    console.log(
-      `TLS: using Home Assistant certificate ${certPath} and key ${keyPath}`,
-    );
+    logger.info("TLS: usando certificado de Home Assistant", {
+      certPath,
+      keyPath,
+    });
     return {
       cert,
       key,
@@ -42,6 +45,7 @@ export function loadHomeAssistantCertificate(config) {
 }
 
 export function loadOrCreateSelfSignedCertificate(config) {
+  const logger = createLogger(config);
   const tlsDirectory = path.join(config.dataPath, "tls");
   fs.mkdirSync(tlsDirectory, { recursive: true, mode: 0o700 });
   const certPath = path.join(tlsDirectory, "selfsigned-cert.pem");
@@ -52,9 +56,10 @@ export function loadOrCreateSelfSignedCertificate(config) {
         fs.readFileSync(certPath),
         fs.readFileSync(keyPath),
       );
-      console.log(
-        `TLS: reusing self-signed certificate ${certPath} and key ${keyPath}`,
-      );
+      logger.info("TLS: reutilizando certificado autofirmado", {
+        certPath,
+        keyPath,
+      });
       return {
         cert: fs.readFileSync(certPath),
         key: fs.readFileSync(keyPath),
@@ -74,9 +79,10 @@ export function loadOrCreateSelfSignedCertificate(config) {
       safeDnsName(config.tls_self_signed_common_name) || "retro-web.local",
     days: Number(config.tls_self_signed_days || 365),
   });
-  console.log(
-    `TLS: generated self-signed certificate ${certPath} and key ${keyPath}`,
-  );
+  logger.info("TLS: certificado autofirmado generado", {
+    certPath,
+    keyPath,
+  });
   return {
     cert: fs.readFileSync(certPath),
     key: fs.readFileSync(keyPath),

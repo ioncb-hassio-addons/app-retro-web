@@ -1,9 +1,10 @@
-import { detectLocale, getLocale, setLocale, t } from "./i18n.js";
+import { detectLocale, getLocale, setLocale, t, tf } from "./i18n.js";
 import {
   cacheAsset,
   clearProfileAssets,
   clearProfileSaves,
   getCachedAsset,
+  compatibleLocalSave,
   getLocalSave,
   getRememberedProfileContext,
   getStorageUsage,
@@ -25,6 +26,8 @@ const state = {
   pendingCoverFile: null,
   pendingLibretroCover: null,
   coverPreviewUrl: null,
+  libraryPlatform: null,
+  autoplaySaveSlot: 1,
   screen: "profiles",
 };
 
@@ -270,7 +273,7 @@ function bindLanguageSelector() {
     });
 }
 
-function renderLibrary() {
+async function renderLibrary() {
   state.screen = "library";
   const profile = currentProfile();
   const adminActions = state.bootstrap.external
@@ -278,6 +281,50 @@ function renderLibrary() {
       ? `<button class="secondary" id="admin-button">${t("administer")}</button>`
       : ""
     : `<button class="secondary" id="admin-button">${t("administer")}</button>`;
+  let continueGames = [];
+  if (state.profileId) {
+    try {
+      const localSaves = await listLocalSaves(state.profileId);
+      const recentByGame = new Map();
+      for (const save of localSaves) {
+        const existing = recentByGame.get(save.gameId);
+        if (!existing || save.updatedAt > existing.updatedAt) {
+          recentByGame.set(save.gameId, save);
+        }
+      }
+      continueGames = [...recentByGame.values()]
+        .map((save) => state.games.find((game) => game.id === save.gameId))
+        .filter(Boolean)
+        .sort((left, right) => {
+          const leftSave = recentByGame.get(left.id)?.updatedAt || 0;
+          const rightSave = recentByGame.get(right.id)?.updatedAt || 0;
+          return rightSave - leftSave;
+        });
+    } catch (error) {
+      console.warn("[Retro Web] Could not read recent local games", error);
+    }
+  }
+  const recentlyAdded = [...state.games]
+    .sort(
+      (left, right) =>
+        new Date(right.created_at).getTime() -
+        new Date(left.created_at).getTime(),
+    )
+    .slice(0, 20);
+  const platformCounts = new Map();
+  for (const game of state.games) {
+    platformCounts.set(
+      game.platform,
+      (platformCounts.get(game.platform) || 0) + 1,
+    );
+  }
+  const platformLabels = new Map(
+    state.platforms.map((platform) => [platform.id, platform.label]),
+  );
+  const selectedPlatform = state.libraryPlatform;
+  const selectedGames = selectedPlatform
+    ? state.games.filter((game) => game.platform === selectedPlatform)
+    : [];
   app.innerHTML = `
     <header class="topbar">
       <div class="brand"><span>🎮</span><strong>Retro Web</strong></div>
@@ -295,11 +342,50 @@ function renderLibrary() {
         <h1>${t("continueAdventure")}</h1>
         <p>${t("libraryHelp")}</p>
       </section>
-      <h2 class="section-title">${t("library")}</h2>
       ${
-        state.games.length
-          ? `<section class="game-grid">${state.games.map(gameCard).join("")}</section>`
-          : `<section class="empty-state"><h2>${t("noGames")}</h2><p class="muted">${t("noGamesHelp")}</p></section>`
+        selectedPlatform
+          ? `
+            <button class="secondary" id="back-library">${t("backToLibrary")}</button>
+            <h2 class="section-title">${escapeHtml(platformLabels.get(selectedPlatform) || selectedPlatform.toUpperCase())}</h2>
+            ${
+              selectedGames.length
+                ? `<section class="game-grid">${selectedGames.map(gameCard).join("")}</section>`
+                : `<section class="empty-state"><h2>${t("noGames")}</h2></section>`
+            }`
+          : `
+            ${
+              continueGames.length
+                ? `<h2 class="section-title">${t("continuePlaying")}</h2>
+                   <section class="game-grid">${continueGames.map(gameCard).join("")}</section>`
+                : ""
+            }
+            ${
+              recentlyAdded.length
+                ? `<h2 class="section-title">${t("recentlyAdded")}</h2>
+                   <section class="game-grid">${recentlyAdded.map(gameCard).join("")}</section>`
+                : ""
+            }
+            ${
+              platformCounts.size
+                ? `<h2 class="section-title">${t("platforms")}</h2>
+                   <section class="platform-grid">${[
+                     ...platformCounts.entries(),
+                   ]
+                     .map(
+                       ([platform, count]) => `
+                     <button class="platform-card" data-platform="${escapeHtml(platform)}">
+                       <strong>${escapeHtml(platformLabels.get(platform) || platform.toUpperCase())}</strong>
+                       <span>${tf(count === 1 ? "gameCount" : "gamesCount", { count })}</span>
+                     </button>`,
+                     )
+                     .join("")}</section>`
+                : ""
+            }
+            ${
+              !state.games.length
+                ? `<section class="empty-state"><h2>${t("noGames")}</h2><p class="muted">${t("noGamesHelp")}</p></section>`
+                : ""
+            }`
       }
     </main>`;
   document
@@ -309,6 +395,16 @@ function renderLibrary() {
   document.querySelector("#logout-button")?.addEventListener("click", logout);
   document.querySelectorAll("[data-game]").forEach((button) => {
     button.addEventListener("click", () => launchGame(button.dataset.game));
+  });
+  document.querySelectorAll("[data-platform]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.libraryPlatform = button.dataset.platform;
+      void renderLibrary();
+    });
+  });
+  document.querySelector("#back-library")?.addEventListener("click", () => {
+    state.libraryPlatform = null;
+    void renderLibrary();
   });
   document.querySelectorAll(".cover img").forEach((image) => {
     image.addEventListener("error", () => {
@@ -425,6 +521,12 @@ function renderAdmin() {
             <button class="primary" type="submit">${t("uploadBios")}</button>
           </form>
         </section>
+        <section class="panel">
+          <h2>Indexación de archivos</h2>
+          <p class="muted">Coloca las ROMs en <code>/data/roms/&lt;plataforma&gt;/</code> y las BIOS en <code>/data/bios/&lt;plataforma&gt;/</code>. Después ejecuta la indexación.</p>
+          <button class="primary" id="reindex-now" type="button">${t("reindexNow")}</button>
+          <div id="index-status" class="muted" style="margin-top:1rem">${t("reindexNever")}</div>
+        </section>
       </div>
     </main>`;
   document.querySelector("#back-button").addEventListener("click", async () => {
@@ -450,6 +552,59 @@ function renderAdmin() {
   document
     .querySelector("#clear-cover-button")
     .addEventListener("click", clearPendingCover);
+  document
+    .querySelector("#reindex-now")
+    ?.addEventListener("click", runManualReindex);
+  void refreshIndexStatus();
+}
+
+async function refreshIndexStatus() {
+  const statusElement = document.querySelector("#index-status");
+  if (!statusElement) return;
+  try {
+    const status = await api("./api/admin/index/status");
+    if (status.running) {
+      statusElement.textContent = t("reindexing");
+      return;
+    }
+    const lastRun = status.lastRun;
+    if (!lastRun) {
+      statusElement.textContent = t("reindexNever");
+      return;
+    }
+    const duration =
+      lastRun.duration_ms == null ? "" : ` · ${lastRun.duration_ms} ms`;
+    statusElement.textContent = `${new Date(lastRun.started_at).toLocaleString()} · ${lastRun.status}${duration} · ${tf(
+      "reindexFiles",
+      {
+        newFiles: lastRun.new_files,
+        changedFiles: lastRun.changed_files,
+        errors: lastRun.error_files,
+      },
+    )}`;
+  } catch (error) {
+    statusElement.textContent = error.message;
+  }
+}
+
+async function runManualReindex() {
+  const button = document.querySelector("#reindex-now");
+  if (button) {
+    button.disabled = true;
+    button.textContent = t("reindexing");
+  }
+  try {
+    await api("./api/admin/index/run", { method: "POST" });
+    toast(t("reindexEnqueued"));
+    await refreshIndexStatus();
+  } catch (error) {
+    toast(error.status === 409 ? t("reindexRunning") : error.message, true);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = t("reindexNow");
+    }
+  }
 }
 
 function autoFillRomTitle(event) {
@@ -639,6 +794,13 @@ async function launchGame(gameId, restoreState = null) {
       game = state.games.find((item) => item.id === gameId);
       if (!game) throw error;
     }
+    if (navigator.onLine) {
+      void api(`./api/games/${gameId}/progress`, {
+        method: "POST",
+      }).catch((error) =>
+        console.warn("[Retro Web] Could not update recent activity", error),
+      );
+    }
     app.innerHTML = `
       <main class="player-view">
         <header class="player-toolbar">
@@ -659,11 +821,38 @@ async function launchGame(gameId, restoreState = null) {
       .addEventListener("click", async () => {
         const exitButton = document.querySelector("#exit-player");
         exitButton.disabled = true;
-        exitButton.textContent = t("saving");
         try {
-          await stopEmulator();
+          const playerText =
+            document.querySelector("#player")?.textContent || "";
+          if (
+            emulatorError ||
+            /romset|missing|failed|error|desconocido/i.test(playerText)
+          ) {
+            await destroyEmulatorInstance();
+            await loadLibrary();
+            return;
+          }
+          const choice = await showConfirmDialog({
+            title: t("confirmExit"),
+            message: escapeHtml(
+              "Guarda el estado actual antes de volver a la biblioteca.",
+            ),
+            primary: t("saveAndExit"),
+            secondary: t("exitGame"),
+            cancel: t("cancel"),
+          });
+          if (choice === "cancel" || !choice) return;
+          if (choice === "primary") {
+            exitButton.textContent = t("saving");
+            await saveAutoStateForExit();
+          }
+          await destroyEmulatorInstance();
+          await loadLibrary();
         } catch (error) {
           toast(error.message, true);
+        } finally {
+          const currentButton = document.querySelector("#exit-player");
+          if (currentButton) currentButton.disabled = false;
         }
       });
     document
@@ -681,12 +870,55 @@ async function launchGame(gameId, restoreState = null) {
 let currentGameId = null;
 let closingEmulator = false;
 let suppressNativeSaveUpload = false;
+let emulatorError = false;
 const runtimeBlobUrls = new Set();
 const coverBlobUrls = new Set();
+
+function showConfirmDialog({ title, message, primary, secondary, cancel }) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "retro-dialog";
+    dialog.innerHTML = `
+      <form method="dialog">
+        <h2>${escapeHtml(title)}</h2>
+        <p>${escapeHtml(message)}</p>
+        <div class="dialog-actions">
+          ${
+            primary
+              ? `<button class="primary" value="primary">${escapeHtml(primary)}</button>`
+              : ""
+          }
+          ${
+            secondary
+              ? `<button class="secondary" value="secondary">${escapeHtml(secondary)}</button>`
+              : ""
+          }
+          ${
+            cancel
+              ? `<button class="danger" value="cancel">${escapeHtml(cancel)}</button>`
+              : ""
+          }
+        </div>
+      </form>`;
+    const cleanup = () => {
+      dialog.remove();
+    };
+    dialog.addEventListener("close", () => {
+      resolve(dialog.returnValue || "cancel");
+      cleanup();
+    });
+    dialog.addEventListener("cancel", () => {
+      dialog.returnValue = "cancel";
+    });
+    document.body.appendChild(dialog);
+    dialog.showModal();
+  });
+}
 
 async function startEmulator(game, restoreState = null) {
   await releaseRuntimeBlobUrls();
   currentGameId = game.id;
+  emulatorError = false;
   const romFilename =
     game.romFilename ||
     (game.platform === "arcade" ? null : `game${game.extension || ""}`);
@@ -769,6 +1001,15 @@ async function startEmulator(game, restoreState = null) {
     const callEvent = emulator.callEvent.bind(emulator);
     emulator.callEvent = (event, data) => {
       const isExit = event === "exit";
+      if (
+        event === "error" ||
+        data?.error ||
+        String(data?.message || "")
+          .toLowerCase()
+          .includes("error")
+      ) {
+        emulatorError = true;
+      }
       if (isExit) suppressNativeSaveUpload = true;
       const result = callEvent(event, data);
       if (isExit && !closingEmulator) {
@@ -784,11 +1025,124 @@ async function startEmulator(game, restoreState = null) {
         toast(error.message, true),
       );
     });
+    if (!restoreState) {
+      void prepareInitialState(game);
+    }
   };
   const script = document.createElement("script");
   script.src = "./vendor/emulatorjs/data/loader.js";
   script.async = false;
   document.head.appendChild(script);
+}
+
+async function prepareInitialState(game) {
+  const slot = state.autoplaySaveSlot;
+  try {
+    const local = await getLocalSave(state.profileId, game.id, "state", slot);
+    if (compatibleLocalSave(local, game)) {
+      const buffer = await local.blob.arrayBuffer();
+      const manager = window.EJS_emulator?.gameManager;
+      if (manager) {
+        manager.loadState(new Uint8Array(buffer));
+        toast(t("stateLoaded"));
+      }
+      return;
+    }
+  } catch (error) {
+    console.warn("[Retro Web] Could not read the local state", error);
+  }
+
+  try {
+    await api(`./api/games/${game.id}/saves/state/${slot}/meta`, {
+      headers: stateHeaders(game),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch (error) {
+    if (error.status !== 404) {
+      console.warn("[Retro Web] Server state lookup failed", error);
+    }
+    return;
+  }
+
+  const emulator = window.EJS_emulator;
+  emulator?.pause?.(true);
+  const choice = await showConfirmDialog({
+    title: t("foundServerState"),
+    message: escapeHtml(
+      "La partida permanecerá en el servidor hasta que elijas qué hacer.",
+    ),
+    primary: t("loadServerState"),
+    secondary: t("startFromScratch"),
+    cancel: t("cancel"),
+  });
+  if (choice === "cancel" || !choice) {
+    emulator?.play?.(true);
+    return;
+  }
+  if (choice === "secondary") {
+    emulator?.play?.(true);
+    return;
+  }
+  try {
+    const buffer = await fetchServerSave("state", slot, game);
+    await putLocalSave(state.profileId, game, "state", slot, buffer);
+    window.EJS_emulator?.gameManager?.loadState(
+      new Uint8Array(await new Blob([buffer]).arrayBuffer()),
+    );
+    window.EJS_emulator?.play?.(true);
+    toast(t("stateLoaded"));
+  } catch (error) {
+    console.warn("[Retro Web] Could not load the server state", error);
+    emulator?.play?.(true);
+  }
+}
+
+async function saveAutoStateForExit() {
+  const emulator = window.EJS_emulator;
+  const manager = emulator?.gameManager;
+  if (!manager) throw new Error("El emulador no está disponible");
+  const save = await manager.getState();
+  if (!save || save.byteLength === 0) {
+    throw new Error("No se pudo crear el estado de la partida");
+  }
+  await putLocalSave(
+    state.profileId,
+    window.EJS_currentGame,
+    "state",
+    state.autoplaySaveSlot,
+    save,
+  );
+}
+
+async function destroyEmulatorInstance() {
+  closingEmulator = true;
+  suppressNativeSaveUpload = true;
+  const emulator = window.EJS_emulator;
+  try {
+    emulator?.pause?.(true);
+  } catch (error) {
+    console.warn("[Retro Web] Could not pause the emulator", error);
+  }
+  try {
+    emulator?.callEvent?.("exit");
+  } catch (error) {
+    console.warn("[Retro Web] Could not emit emulator exit", error);
+  }
+  document.querySelector("#player")?.replaceChildren();
+  window.EJS_emulator = undefined;
+  window.EJS_player = undefined;
+  window.EJS_currentGame = undefined;
+  window.EJS_loadStateURL = undefined;
+  await releaseRuntimeBlobUrls();
+  closingEmulator = false;
+  suppressNativeSaveUpload = false;
+  emulatorError = false;
+}
+
+async function restartEmulatorWithState(game, stateBlob) {
+  const stateUrl = URL.createObjectURL(stateBlob);
+  await destroyEmulatorInstance();
+  await startEmulator(game, { url: stateUrl });
 }
 
 function selectedSlot() {
@@ -808,20 +1162,14 @@ async function loadSaveState() {
       "state",
       selectedSlot(),
     );
+    const game = window.EJS_currentGame;
     const compatibleLocal = compatibleLocalSave(local, window.EJS_currentGame);
+    let stateBuffer;
     if (!compatibleLocal) {
       const buffer = await fetchServerSave(
         "state",
         selectedSlot(),
         window.EJS_currentGame,
-      );
-      sessionStorage.setItem(
-        "retro-web-pending-state",
-        JSON.stringify({
-          gameId: currentGameId,
-          slot: selectedSlot(),
-          source: "server",
-        }),
       );
       await putLocalSave(
         state.profileId,
@@ -830,17 +1178,11 @@ async function loadSaveState() {
         selectedSlot(),
         buffer,
       );
+      stateBuffer = buffer;
     } else {
-      sessionStorage.setItem(
-        "retro-web-pending-state",
-        JSON.stringify({
-          gameId: currentGameId,
-          slot: selectedSlot(),
-          source: "local",
-        }),
-      );
+      stateBuffer = await local.blob.arrayBuffer();
     }
-    location.reload();
+    await restartEmulatorWithState(game, new Blob([stateBuffer]));
   } catch (error) {
     toast(error.message, true);
   }
@@ -1145,15 +1487,6 @@ function stateHeaders(game) {
   };
 }
 
-function compatibleLocalSave(save, game) {
-  return (
-    save?.blob &&
-    save.core === game?.core &&
-    save.romHash === game?.hash &&
-    save.emulatorVersion === game?.emulatorVersion
-  );
-}
-
 async function resolveCachedAsset(kind, identifier, url, expectedHash = null) {
   const cached = await getCachedAsset(state.profileId, kind, identifier);
   if (cached?.blob && (!expectedHash || cached.hash === expectedHash)) {
@@ -1202,13 +1535,19 @@ async function hydrateCachedCovers() {
         console.warn("[Retro Web] Cover cache failed", error);
       }
     }
-    const image = document.querySelector(`[data-cover-game="${game.id}"]`);
-    if (!image || !cached?.blob) continue;
+    const images = [...document.querySelectorAll("[data-cover-game]")].filter(
+      (image) => image.dataset.coverGame === game.id,
+    );
+    if (!images.length || !cached?.blob) continue;
     const objectUrl = URL.createObjectURL(cached.blob);
     coverBlobUrls.add(objectUrl);
-    image.src = objectUrl;
-    image.hidden = false;
-    image.nextElementSibling.hidden = true;
+    for (const image of images) {
+      image.src = objectUrl;
+      image.hidden = false;
+      if (image.nextElementSibling) {
+        image.nextElementSibling.hidden = true;
+      }
+    }
   }
 }
 
