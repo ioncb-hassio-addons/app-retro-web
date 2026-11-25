@@ -20,6 +20,8 @@ under `/data`; the app must not download or distribute copyrighted media.
 
 ## Working rules
 
+- Start every new integration or change on a new branch using `feature/`,
+  `fix/`, or another appropriate prefix; never implement it directly on `main`.
 - Prefer small, focused changes that preserve the existing behavior.
 - Keep the server-side source in ESM JavaScript and browser code framework-free.
 - Use the existing SQLite schema and migration helpers when extending data.
@@ -94,7 +96,8 @@ FBNeo ROMsets must match the FBNeo revision shipped by EmulatorJS.
 ## Current library and index work
 
 - State loading checks slot `1` in IndexedDB before querying the server.
-- Loading a state restarts the EmulatorJS instance without `location.reload()`.
+- Loading a state calls `gameManager.loadState()` on the active EmulatorJS
+  instance; it never recreates the runtime or reloads the page.
 - The library separates continue-playing, recently added, and platform views.
 - Manual indexing scans `/data/roms/<platform>/` and
   `/data/bios/<platform>/`.

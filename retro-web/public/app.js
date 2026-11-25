@@ -822,13 +822,13 @@ async function launchGame(gameId, restoreState = null) {
         const exitButton = document.querySelector("#exit-player");
         exitButton.disabled = true;
         try {
-          const playerText =
-            document.querySelector("#player")?.textContent || "";
-          if (
-            emulatorError ||
-            /romset|missing|failed|error|desconocido/i.test(playerText)
-          ) {
+          if (emulatorError) {
             await destroyEmulatorInstance();
+            await loadLibrary();
+            return;
+          }
+          if (!isEmulatorStarted()) {
+            await teardownEmulatorForAssetReset();
             await loadLibrary();
             return;
           }
@@ -871,6 +871,9 @@ let currentGameId = null;
 let closingEmulator = false;
 let suppressNativeSaveUpload = false;
 let emulatorError = false;
+let initialStateApplied = false;
+let assetsCacheCleared = false;
+let emulatorHasStarted = false;
 const runtimeBlobUrls = new Set();
 const coverBlobUrls = new Set();
 
@@ -918,7 +921,9 @@ function showConfirmDialog({ title, message, primary, secondary, cancel }) {
 async function startEmulator(game, restoreState = null) {
   await releaseRuntimeBlobUrls();
   currentGameId = game.id;
+  initialStateApplied = false;
   emulatorError = false;
+  emulatorHasStarted = false;
   const romFilename =
     game.romFilename ||
     (game.platform === "arcade" ? null : `game${game.extension || ""}`);
@@ -956,6 +961,7 @@ async function startEmulator(game, restoreState = null) {
             game.biosHash,
           );
   }
+  assetsCacheCleared = false;
   window.EJS_currentGame = game;
   window.EJS_player = "#player";
   window.EJS_core = game.core;
@@ -988,7 +994,11 @@ async function startEmulator(game, restoreState = null) {
   window.EJS_onSaveSave = uploadNativeSave;
   window.EJS_onLoadSave = loadNativeSave;
   window.EJS_onGameStart = () => {
+    emulatorHasStarted = true;
     void loadNativeSave();
+    if (!restoreState) {
+      void prepareInitialState(game);
+    }
     if (restoreState) {
       setTimeout(() => {
         URL.revokeObjectURL(restoreState.url);
@@ -1001,13 +1011,7 @@ async function startEmulator(game, restoreState = null) {
     const callEvent = emulator.callEvent.bind(emulator);
     emulator.callEvent = (event, data) => {
       const isExit = event === "exit";
-      if (
-        event === "error" ||
-        data?.error ||
-        String(data?.message || "")
-          .toLowerCase()
-          .includes("error")
-      ) {
+      if (event === "error" || data?.error === true) {
         emulatorError = true;
       }
       if (isExit) suppressNativeSaveUpload = true;
@@ -1025,9 +1029,6 @@ async function startEmulator(game, restoreState = null) {
         toast(error.message, true),
       );
     });
-    if (!restoreState) {
-      void prepareInitialState(game);
-    }
   };
   const script = document.createElement("script");
   script.src = "./vendor/emulatorjs/data/loader.js";
@@ -1037,23 +1038,21 @@ async function startEmulator(game, restoreState = null) {
 
 async function prepareInitialState(game) {
   const slot = state.autoplaySaveSlot;
+  let local = null;
   try {
-    const local = await getLocalSave(state.profileId, game.id, "state", slot);
+    local = await getLocalSave(state.profileId, game.id, "state", slot);
     if (compatibleLocalSave(local, game)) {
       const buffer = await local.blob.arrayBuffer();
-      const manager = window.EJS_emulator?.gameManager;
-      if (manager) {
-        manager.loadState(new Uint8Array(buffer));
-        toast(t("stateLoaded"));
-      }
+      await applySaveStateToRunningInstance(buffer);
       return;
     }
   } catch (error) {
     console.warn("[Retro Web] Could not read the local state", error);
   }
 
+  let remote = null;
   try {
-    await api(`./api/games/${game.id}/saves/state/${slot}/meta`, {
+    remote = await api(`./api/games/${game.id}/saves/state/${slot}/meta`, {
       headers: stateHeaders(game),
       signal: AbortSignal.timeout(5000),
     });
@@ -1061,6 +1060,31 @@ async function prepareInitialState(game) {
     if (error.status !== 404) {
       console.warn("[Retro Web] Server state lookup failed", error);
     }
+    return;
+  }
+
+  const localUpdatedAt = local?.updatedAt
+    ? Date.parse(new Date(local.updatedAt).toISOString())
+    : null;
+  const remoteUpdatedAt = remote?.updatedAt
+    ? Date.parse(remote.updatedAt)
+    : null;
+  const compatibleLocal = compatibleLocalSave(local, game);
+  if (compatibleLocal) {
+    if (remote?.hash && local?.hash && remote.hash === local.hash) {
+      return;
+    }
+    if (
+      localUpdatedAt !== null &&
+      remoteUpdatedAt !== null &&
+      remoteUpdatedAt <= localUpdatedAt
+    ) {
+      return;
+    }
+  } else if (localUpdatedAt !== null && remoteUpdatedAt !== null) {
+    if (remoteUpdatedAt <= localUpdatedAt) return;
+  }
+  if (!remote) {
     return;
   }
 
@@ -1086,11 +1110,7 @@ async function prepareInitialState(game) {
   try {
     const buffer = await fetchServerSave("state", slot, game);
     await putLocalSave(state.profileId, game, "state", slot, buffer);
-    window.EJS_emulator?.gameManager?.loadState(
-      new Uint8Array(await new Blob([buffer]).arrayBuffer()),
-    );
-    window.EJS_emulator?.play?.(true);
-    toast(t("stateLoaded"));
+    await applySaveStateToRunningInstance(buffer);
   } catch (error) {
     console.warn("[Retro Web] Could not load the server state", error);
     emulator?.play?.(true);
@@ -1137,16 +1157,62 @@ async function destroyEmulatorInstance() {
   closingEmulator = false;
   suppressNativeSaveUpload = false;
   emulatorError = false;
+  emulatorHasStarted = false;
 }
 
-async function restartEmulatorWithState(game, stateBlob) {
-  const stateUrl = URL.createObjectURL(stateBlob);
-  await destroyEmulatorInstance();
-  await startEmulator(game, { url: stateUrl });
+async function teardownEmulatorForAssetReset() {
+  closingEmulator = true;
+  suppressNativeSaveUpload = true;
+  const emulator = window.EJS_emulator;
+  try {
+    emulator?.pause?.(true);
+  } catch (error) {
+    console.warn("[Retro Web] Could not pause the emulator", error);
+  }
+  try {
+    emulator?.gameManager?.toggleMainLoop?.(0);
+  } catch (error) {
+    console.warn("[Retro Web] Could not stop the emulator loop", error);
+  }
+  try {
+    const module = emulator?.gameManager?.Module;
+    if (typeof module?.abort === "function") {
+      module.abort();
+    }
+  } catch (error) {
+    console.warn("[Retro Web] Could not abort the emulator module", error);
+  }
+  document.querySelector("#player")?.replaceChildren();
+  window.EJS_emulator = undefined;
+  window.EJS_player = undefined;
+  window.EJS_currentGame = undefined;
+  window.EJS_loadStateURL = undefined;
+  await releaseRuntimeBlobUrls();
+  closingEmulator = false;
+  suppressNativeSaveUpload = false;
+  emulatorError = false;
+}
+
+async function applySaveStateToRunningInstance(buffer) {
+  if (initialStateApplied) return;
+  const emulator = window.EJS_emulator;
+  const manager = emulator?.gameManager;
+  if (!manager) throw new Error("El emulador no está disponible");
+  const state = new Uint8Array(buffer);
+  if (!state.byteLength) throw new Error("El estado guardado está vacío");
+  manager.loadState(state);
+  initialStateApplied = true;
+  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  emulator.play?.(true);
+  toast(t("stateLoaded"));
 }
 
 function selectedSlot() {
   return Number(document.querySelector("#save-slot")?.value || 1);
+}
+
+function isEmulatorStarted() {
+  return emulatorHasStarted;
 }
 
 async function uploadSaveState({ state: save }) {
@@ -1182,7 +1248,8 @@ async function loadSaveState() {
     } else {
       stateBuffer = await local.blob.arrayBuffer();
     }
-    await restartEmulatorWithState(game, new Blob([stateBuffer]));
+    initialStateApplied = false;
+    await applySaveStateToRunningInstance(stateBuffer);
   } catch (error) {
     toast(error.message, true);
   }
@@ -1457,6 +1524,9 @@ async function manageLocalStorage() {
     if (window.confirm(message)) {
       await clearProfileAssets(state.profileId);
       await releaseRuntimeBlobUrls();
+      assetsCacheCleared = true;
+      await teardownEmulatorForAssetReset();
+      await loadLibrary();
       toast(t("localAssetsCleared"));
     }
     if (usage.saves && window.confirm(t("clearLocalSavesQuestion"))) {
@@ -1489,7 +1559,11 @@ function stateHeaders(game) {
 
 async function resolveCachedAsset(kind, identifier, url, expectedHash = null) {
   const cached = await getCachedAsset(state.profileId, kind, identifier);
-  if (cached?.blob && (!expectedHash || cached.hash === expectedHash)) {
+  if (
+    !assetsCacheCleared &&
+    cached?.blob &&
+    (!expectedHash || cached.hash === expectedHash)
+  ) {
     const objectUrl = URL.createObjectURL(cached.blob);
     runtimeBlobUrls.add(objectUrl);
     return objectUrl;

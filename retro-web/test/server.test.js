@@ -754,3 +754,83 @@ test("cover hydration updates every duplicate game card", () => {
   assert.match(source, /for \(const image of images\)/);
   assert.doesNotMatch(source, /document\.querySelector\(`\[data-cover-game=/);
 });
+
+test("loading a state does not destroy or recreate the emulator", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "public", "app.js"),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /location\.reload\s*\(/);
+  assert.match(source, /manager\.loadState\(state\)/);
+  assert.match(source, /emulator\.play\?\.\(true\)/);
+  assert.doesNotMatch(source, /emulator\.pause\?\.\(true\)/);
+});
+
+test("initial state lookup applies local save before comparing server metadata", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "public", "app.js"),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /if \(compatibleLocalSave\(local, game\)\)[\s\S]*applySaveStateToRunningInstance\(buffer\)/,
+  );
+  assert.match(source, /remote\.hash === local\.hash/);
+  assert.match(source, /remoteUpdatedAt <= localUpdatedAt/);
+});
+
+test("initial state is applied at EmulatorJS game start, not during ready", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "public", "app.js"),
+    "utf8",
+  );
+  assert.match(source, /window\.EJS_onGameStart = \(\) =>/);
+  assert.match(
+    source,
+    /window\.EJS_onGameStart = \(\) =>[\s\S]*prepareInitialState\(game\)/,
+  );
+  assert.match(source, /initialStateApplied = false/);
+  assert.match(source, /manager\.loadState\(state\)/);
+});
+
+test("clearing profile assets forces a fresh server asset download", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "public", "app.js"),
+    "utf8",
+  );
+  assert.match(source, /let assetsCacheCleared = false/);
+  assert.match(source, /assetsCacheCleared = true/);
+  assert.match(source, /!assetsCacheCleared[\s\S]*cached\?\.blob/);
+  assert.match(source, /await teardownEmulatorForAssetReset\(\)/);
+  assert.match(
+    source,
+    /async function teardownEmulatorForAssetReset\(\)[\s\S]*emulator\?\.(pause|gameManager)/,
+  );
+  const teardownStart = source.indexOf(
+    "async function teardownEmulatorForAssetReset",
+  );
+  const nextFunction = source.indexOf(
+    "\nasync function ",
+    teardownStart + "async function teardownEmulatorForAssetReset".length,
+  );
+  const teardownBody =
+    nextFunction >= 0
+      ? source.slice(teardownStart, nextFunction)
+      : source.slice(teardownStart);
+  assert.doesNotMatch(teardownBody, /callEvent\?\.\(\"exit\"\)/);
+});
+
+test("exit before EmulatorJS starts goes directly to the library", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "public", "app.js"),
+    "utf8",
+  );
+  assert.match(source, /function isEmulatorStarted\(\)/);
+  assert.match(source, /emulatorHasStarted = true/);
+  assert.match(source, /return emulatorHasStarted/);
+  assert.match(
+    source,
+    /if \(!isEmulatorStarted\(\)\)[\s\S]*teardownEmulatorForAssetReset\(\)/,
+  );
+  assert.doesNotMatch(source, /romset\|missing\|failed\|error\|desconocido/i);
+});
