@@ -18,7 +18,7 @@ import {
   hashFile,
 } from "../app/indexer.js";
 import { compatibleLocalSave } from "../public/local-store.js";
-import { createLogger } from "../app/logger.js";
+import { createLogger, formatLogTimestamp } from "../app/logger.js";
 
 async function setup() {
   const dataPath = fs.mkdtempSync(path.join(os.tmpdir(), "retro-web-test-"));
@@ -734,6 +734,22 @@ test("logger uses Home Assistant timestamp format and respects log level", () =>
     infos[0],
     /^\[\d{2}:\d{2}:\d{2}\] INFO: Worker started newFiles=2$/,
   );
+});
+
+test("logger timestamp uses the Home Assistant TZ environment", () => {
+  const previousTimezone = process.env.TZ;
+  const instant = new Date("2026-11-25T21:56:38.000Z");
+
+  try {
+    process.env.TZ = "UTC";
+    assert.equal(formatLogTimestamp(instant), "21:56:38");
+
+    process.env.TZ = "America/Lima";
+    assert.equal(formatLogTimestamp(instant), "16:56:38");
+  } finally {
+    if (previousTimezone === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTimezone;
+  }
 });
 
 test("runtime logger messages are in English", () => {
