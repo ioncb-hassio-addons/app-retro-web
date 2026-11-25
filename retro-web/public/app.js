@@ -687,24 +687,48 @@ const coverBlobUrls = new Set();
 async function startEmulator(game, restoreState = null) {
   await releaseRuntimeBlobUrls();
   currentGameId = game.id;
-  const romUrl = await resolveCachedAsset(
-    "rom",
-    game.hash,
-    `./api/games/${game.id}/rom`,
-    game.hash,
-  );
-  const biosUrl = game.biosUrl
-    ? await resolveCachedAsset(
-        "bios",
-        game.biosHash || game.biosUrl,
-        game.biosUrl,
-        game.biosHash,
-      )
-    : undefined;
+  const romFilename =
+    game.romFilename ||
+    (game.platform === "arcade" ? null : `game${game.extension || ""}`);
+  const romUrl =
+    game.platform === "arcade" && romFilename
+      ? `${await resolveCachedAsset(
+          "rom",
+          game.hash,
+          `./api/games/${game.id}/rom`,
+          game.hash,
+        )}#${encodeURIComponent(romFilename)}`
+      : await resolveCachedAsset(
+          "rom",
+          game.hash,
+          `./api/games/${game.id}/rom`,
+          game.hash,
+        );
+  let biosUrl = undefined;
+  if (game.biosUrl) {
+    const biosFilename = decodeURIComponent(
+      game.biosUrl.split("/").pop().split("#")[0].split("?")[0],
+    );
+    biosUrl =
+      game.platform === "arcade"
+        ? `${await resolveCachedAsset(
+            "bios",
+            game.biosHash || game.biosUrl,
+            game.biosUrl,
+            game.biosHash,
+          )}#${encodeURIComponent(biosFilename)}`
+        : await resolveCachedAsset(
+            "bios",
+            game.biosHash || game.biosUrl,
+            game.biosUrl,
+            game.biosHash,
+          );
+  }
   window.EJS_currentGame = game;
   window.EJS_player = "#player";
   window.EJS_core = game.core;
-  window.EJS_gameName = game.title;
+  window.EJS_gameName =
+    game.platform === "arcade" && romFilename ? romFilename : game.title;
   window.EJS_color = "#ff3b6b";
   window.EJS_backgroundImage = game.hasCover
     ? new URL(`./api/games/${game.id}/cover`, location.href).href
@@ -714,6 +738,7 @@ async function startEmulator(game, restoreState = null) {
   window.EJS_gameID = `${state.profileId}-${game.id}-${game.core}`;
   window.EJS_gameUrl = romUrl;
   window.EJS_biosUrl = biosUrl;
+  window.EJS_dontExtractBIOS = game.platform === "arcade";
   window.EJS_loadStateURL = restoreState?.url || undefined;
   window.EJS_startOnLoaded = Boolean(restoreState?.url);
   window.EJS_pathtodata = new URL(
@@ -1136,7 +1161,6 @@ async function resolveCachedAsset(kind, identifier, url, expectedHash = null) {
     runtimeBlobUrls.add(objectUrl);
     return objectUrl;
   }
-
   const arrayBuffer = await api(url, {
     headers: { "x-profile-id": state.profileId },
   });

@@ -269,6 +269,7 @@ export function createRetroApp(config, db, mode) {
       hasCover: Boolean(game.cover_path),
       hash: game.hash,
       size: game.size,
+      romFilename: game.rom_filename || null,
       emulatorVersion: emulatorManifest.emulatorVersion,
       coreBuildId: emulatorManifest.cores?.[game.core]?.buildId || null,
       biosHash: game.bios_system
@@ -817,14 +818,15 @@ function mountAdminRoutes(app, config, db, upload) {
         core: platform.core,
         extension,
         romPath: targetPath,
+        romFilename: request.file.originalname,
         biosSystem: platformId === "arcade" ? platformId : null,
         size: request.file.size,
         hash,
       };
       db.prepare(
         `INSERT INTO games
-           (id, title, platform, core, extension, rom_path, bios_system, size, hash, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, title, platform, core, extension, rom_path, rom_filename, bios_system, size, hash, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         game.id,
         game.title,
@@ -832,6 +834,7 @@ function mountAdminRoutes(app, config, db, upload) {
         game.core,
         game.extension,
         game.romPath,
+        game.romFilename,
         game.biosSystem,
         game.size,
         game.hash,
