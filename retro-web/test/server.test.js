@@ -834,7 +834,6 @@ test("exit before EmulatorJS starts goes directly to the library", () => {
   );
   assert.doesNotMatch(source, /romset\|missing\|failed\|error\|desconocido/i);
 });
-
 test("storage and save sync use the shared retro dialog", () => {
   const source = fs.readFileSync(
     path.join(process.cwd(), "public", "app.js"),
