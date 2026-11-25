@@ -91,6 +91,15 @@ export async function getLocalSave(profileId, gameId, kind, slot) {
   return get("saves", saveKey(profileId, gameId, kind, slot));
 }
 
+export async function deleteLocalSave(profileId, gameId, kind, slot) {
+  const db = await openDatabase();
+  const key = saveKey(profileId, gameId, kind, slot);
+  const transaction = db.transaction(["saves", "metadata"], "readwrite");
+  transaction.objectStore("saves").delete(key);
+  transaction.objectStore("metadata").delete(key);
+  await transactionComplete(transaction);
+}
+
 export function compatibleLocalSave(save, game) {
   return (
     save?.blob &&
