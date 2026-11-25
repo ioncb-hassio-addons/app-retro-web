@@ -26,6 +26,7 @@ RUN apk add --no-cache \
     libcrypto3=3.5.9-r1 \
     libssl3=3.5.9-r1 \
     openssl=3.5.9-r1 \
+    tzdata=2026f-r0 \
     && npm ci --omit=dev --omit=optional --ignore-scripts
 
 COPY app ./app

@@ -24,12 +24,7 @@ export function createLogger(config = {}) {
 
   function write(level, message, details = null) {
     if ((LEVELS[level] ?? LEVELS.info) < threshold) return;
-    const now = new Date();
-    const timestamp = [
-      String(now.getHours()).padStart(2, "0"),
-      String(now.getMinutes()).padStart(2, "0"),
-      String(now.getSeconds()).padStart(2, "0"),
-    ].join(":");
+    const timestamp = formatLogTimestamp();
     let output = `[${timestamp}] ${LABELS[level]}: ${String(message)}`;
     if (details !== null && details !== undefined) {
       output += ` ${formatDetails(details)}`;
@@ -71,4 +66,32 @@ function formatValue(value) {
   if (typeof value === "string") return value;
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+export function formatLogTimestamp(date = new Date()) {
+  const configuredTimezone = String(process.env.TZ || "").trim();
+  if (configuredTimezone) {
+    try {
+      const parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: configuredTimezone,
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+      }).formatToParts(date);
+      const values = Object.fromEntries(
+        parts
+          .filter((part) => part.type !== "literal")
+          .map((part) => [part.type, part.value]),
+      );
+      return [values.hour, values.minute, values.second].join(":");
+    } catch {
+      // Fall back to the container's system timezone for invalid TZ values.
+    }
+  }
+  return [
+    String(date.getHours()).padStart(2, "0"),
+    String(date.getMinutes()).padStart(2, "0"),
+    String(date.getSeconds()).padStart(2, "0"),
+  ].join(":");
 }
