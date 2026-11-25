@@ -703,8 +703,8 @@ test("logger uses Home Assistant timestamp format and respects log level", () =>
   console.log = (message) => messages.push(message);
   try {
     const logger = createLogger({ log_level: "warning" });
-    logger.info("Mensaje oculto");
-    logger.warning("Mensaje visible");
+    logger.info("Hidden message");
+    logger.warning("Visible message");
   } finally {
     console.log = originalLog;
   }
@@ -714,17 +714,17 @@ test("logger uses Home Assistant timestamp format and respects log level", () =>
   const warnings = [];
   console.warn = (message) => warnings.push(message);
   try {
-    createLogger({ log_level: "warning" }).warning("Estado indexado");
+    createLogger({ log_level: "warning" }).warning("Indexed state");
   } finally {
     console.warn = originalWarn;
   }
-  assert.match(warnings[0], /^\[\d{2}:\d{2}:\d{2}\] WARNING: Estado indexado$/);
+  assert.match(warnings[0], /^\[\d{2}:\d{2}:\d{2}\] WARNING: Indexed state$/);
 
   const originalInfo = console.log;
   const infos = [];
   console.log = (message) => infos.push(message);
   try {
-    createLogger({ log_level: "info" }).info("Worker iniciado", {
+    createLogger({ log_level: "info" }).info("Worker started", {
       newFiles: 2,
     });
   } finally {
@@ -732,8 +732,24 @@ test("logger uses Home Assistant timestamp format and respects log level", () =>
   }
   assert.match(
     infos[0],
-    /^\[\d{2}:\d{2}:\d{2}\] INFO: Worker iniciado newFiles=2$/,
+    /^\[\d{2}:\d{2}:\d{2}\] INFO: Worker started newFiles=2$/,
   );
+});
+
+test("runtime logger messages are in English", () => {
+  const appDirectory = path.join(process.cwd(), "app");
+  const logSourceFiles = [
+    path.join(appDirectory, "indexer.js"),
+    path.join(appDirectory, "server.js"),
+    path.join(appDirectory, "tls.js"),
+  ];
+  const spanishLoggerText =
+    /Indexación|Escaneando|Buscando|completada|fallida|Indexando|No se pudo|actualizada|nueva indexada|Archivo eliminado|Carátulas pendientes|Carátula encontrada|Intento de carátula|No se encontró|reutilizando|certificado autofirmado|usando certificado|Fallo la|Error al procesar|Mensaje oculto|Mensaje visible|Estado indexado|Worker iniciado/i;
+
+  for (const filePath of logSourceFiles) {
+    const source = fs.readFileSync(filePath, "utf8");
+    assert.doesNotMatch(source, spanishLoggerText, path.basename(filePath));
+  }
 });
 
 test("service worker clones network responses before cache writes", () => {
@@ -935,4 +951,57 @@ test("platform cards use transparent WebP logos", () => {
   for (const logo of logos) {
     assert.match(swSource, new RegExp(`platforms/${logo.replace(".", "\\.")}`));
   }
+});
+
+test("library uses breadcrumb navigation and ordered sections", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const source = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");
+  const spanish = JSON.parse(
+    fs.readFileSync(path.join(publicDirectory, "i18n", "es.json"), "utf8"),
+  );
+  const english = JSON.parse(
+    fs.readFileSync(path.join(publicDirectory, "i18n", "en.json"), "utf8"),
+  );
+
+  assert.match(source, /id="back-profiles-library"/);
+  assert.match(source, /breadcrumb-navigation/);
+  assert.match(source, /id="back-library"/);
+  assert.match(
+    source,
+    /<span class="breadcrumb-current">\$\{t\("library"\)\}<\/span>/,
+  );
+  const topbarEnd = source.indexOf('<main class="content">');
+  const topbarSource = topbarEnd >= 0 ? source.slice(0, topbarEnd) : source;
+  assert.doesNotMatch(topbarSource, /back-profiles-library/);
+  assert.equal(spanish.profiles, "Perfiles");
+  assert.equal(spanish.library, "Biblioteca");
+  assert.equal(english.profiles, "Profiles");
+  assert.equal(english.library, "Library");
+
+  const continueIndex = source.indexOf('t("continuePlaying")');
+  const platformsIndex = source.indexOf('t("platforms")');
+  const recentIndex = source.indexOf('t("recentlyAdded")');
+  assert.ok(continueIndex >= 0);
+  assert.ok(platformsIndex > continueIndex);
+  assert.ok(recentIndex > platformsIndex);
+});
+
+test("library navigation preserves scroll positions per view", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const source = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");
+
+  assert.match(source, /scrollPositions:\s*new Map\(\)/);
+  assert.match(source, /function rememberCurrentViewScroll/);
+  assert.match(source, /function restoreViewScroll/);
+  assert.match(
+    source,
+    /rememberCurrentViewScroll\(\);\s*state\.libraryPlatform/,
+  );
+  assert.match(source, /rememberCurrentViewScroll\(\);\s*renderProfiles/);
+  assert.match(source, /rememberCurrentViewScroll\(\);\s*if \(state\.screen/);
+  assert.match(
+    source,
+    /window\.scrollTo\(\{ top: 0, left: 0, behavior: "auto" \}\)/,
+  );
+  assert.match(source, /restoreViewScroll\(\);/);
 });

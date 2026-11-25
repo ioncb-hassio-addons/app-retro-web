@@ -107,7 +107,6 @@
   "continuePlaying": "Seguir jugando",
   "recentlyAdded": "Agregados recientemente",
   "platforms": "Plataformas",
-  "backToLibrary": "Volver a la biblioteca",
   "gamesCount": "{count} juegos",
   "gameCount": "{count} juego",
   "foundServerState": "Se encontró una partida guardada en el servidor. ¿Quieres cargarla?",

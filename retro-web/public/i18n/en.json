@@ -107,7 +107,6 @@
   "continuePlaying": "Continue playing",
   "recentlyAdded": "Recently added",
   "platforms": "Platforms",
-  "backToLibrary": "Back to library",
   "gamesCount": "{count} games",
   "gameCount": "{count} game",
   "foundServerState": "A saved state was found on the server. Do you want to load it?",

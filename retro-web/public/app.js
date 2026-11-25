@@ -32,7 +32,31 @@ const state = {
   libraryPlatform: null,
   autoplaySaveSlot: 1,
   screen: "profiles",
+  scrollPositions: new Map(),
 };
+
+function getViewKey() {
+  if (state.screen === "library") {
+    return `library:${state.profileId || "none"}:${state.libraryPlatform || "all"}`;
+  }
+  if (state.screen === "player") {
+    return `player:${currentGameId || "none"}`;
+  }
+  return state.screen;
+}
+
+function rememberCurrentViewScroll(viewKey = getViewKey()) {
+  state.scrollPositions.set(viewKey, window.scrollY);
+}
+
+function restoreViewScroll(viewKey = getViewKey()) {
+  const scrollTop = state.scrollPositions.get(viewKey) || 0;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: scrollTop, left: 0, behavior: "auto" });
+    });
+  });
+}
 
 async function api(url, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -200,10 +224,12 @@ function renderProfiles() {
     );
   });
   bindLanguageSelector();
+  restoreViewScroll();
 }
 
 async function selectProfile(profileId) {
   try {
+    rememberCurrentViewScroll("profiles");
     await api("./api/profiles/select", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -284,6 +310,7 @@ function bindLanguageSelector() {
           toast(error.message, true);
         }
       }
+      rememberCurrentViewScroll();
       if (state.screen === "library") renderLibrary();
       else renderProfiles();
     });
@@ -346,7 +373,6 @@ async function renderLibrary() {
       <div class="brand"><span>🎮</span><strong>Retro Web</strong></div>
       <div class="topbar-actions">
         ${languageSelector()}
-        <button class="secondary" id="profiles-button">${t("profiles")}</button>
         ${adminActions}
         ${state.bootstrap.external ? `<button class="secondary" id="logout-button">${t("logout")}</button>` : ""}
       </div>
@@ -358,10 +384,22 @@ async function renderLibrary() {
         <h1>${t("continueAdventure")}</h1>
         <p>${t("libraryHelp")}</p>
       </section>
+      <nav class="breadcrumb-navigation" aria-label="${t("profiles")}">
+        <button type="button" class="breadcrumb-link" id="back-profiles-library">${t("profiles")}</button>
+        <span class="breadcrumb-separator" aria-hidden="true">/</span>
+        <span class="breadcrumb-current">${escapeHtml(profile?.name || t("profile"))}</span>
+        <span class="breadcrumb-separator" aria-hidden="true">/</span>
+        ${
+          selectedPlatform
+            ? `<button type="button" class="breadcrumb-link" id="back-library">${t("library")}</button>
+               <span class="breadcrumb-separator" aria-hidden="true">/</span>
+               <span class="breadcrumb-current">${escapeHtml(platformLabels.get(selectedPlatform) || selectedPlatform.toUpperCase())}</span>`
+            : `<span class="breadcrumb-current">${t("library")}</span>`
+        }
+      </nav>
       ${
         selectedPlatform
           ? `
-            <button class="secondary" id="back-library">${t("backToLibrary")}</button>
             <h2 class="section-title">${escapeHtml(platformLabels.get(selectedPlatform) || selectedPlatform.toUpperCase())}</h2>
             ${
               selectedGames.length
@@ -373,12 +411,6 @@ async function renderLibrary() {
               continueGames.length
                 ? `<h2 class="section-title">${t("continuePlaying")}</h2>
                    <section class="game-grid">${continueGames.map(gameCard).join("")}</section>`
-                : ""
-            }
-            ${
-              recentlyAdded.length
-                ? `<h2 class="section-title">${t("recentlyAdded")}</h2>
-                   <section class="game-grid">${recentlyAdded.map(gameCard).join("")}</section>`
                 : ""
             }
             ${
@@ -401,6 +433,12 @@ async function renderLibrary() {
                 : ""
             }
             ${
+              recentlyAdded.length
+                ? `<h2 class="section-title">${t("recentlyAdded")}</h2>
+                   <section class="game-grid">${recentlyAdded.map(gameCard).join("")}</section>`
+                : ""
+            }
+            ${
               !state.games.length
                 ? `<section class="empty-state"><h2>${t("noGames")}</h2><p class="muted">${t("noGamesHelp")}</p></section>`
                 : ""
@@ -408,8 +446,11 @@ async function renderLibrary() {
       }
     </main>`;
   document
-    .querySelector("#profiles-button")
-    .addEventListener("click", renderProfiles);
+    .querySelector("#back-profiles-library")
+    ?.addEventListener("click", () => {
+      rememberCurrentViewScroll();
+      renderProfiles();
+    });
   document.querySelector("#admin-button")?.addEventListener("click", openAdmin);
   document.querySelector("#logout-button")?.addEventListener("click", logout);
   document.querySelectorAll("[data-game]").forEach((button) => {
@@ -417,11 +458,13 @@ async function renderLibrary() {
   });
   document.querySelectorAll("[data-platform]").forEach((button) => {
     button.addEventListener("click", () => {
+      rememberCurrentViewScroll();
       state.libraryPlatform = button.dataset.platform;
       void renderLibrary();
     });
   });
   document.querySelector("#back-library")?.addEventListener("click", () => {
+    rememberCurrentViewScroll();
     state.libraryPlatform = null;
     void renderLibrary();
   });
@@ -433,6 +476,7 @@ async function renderLibrary() {
   });
   bindLanguageSelector();
   void hydrateCachedCovers();
+  restoreViewScroll();
 }
 
 function gameCard(game) {
@@ -462,6 +506,7 @@ async function logout() {
 }
 
 async function openAdmin() {
+  rememberCurrentViewScroll();
   if (state.bootstrap.external) {
     const password = prompt(t("externalAdminPassword"));
     if (password === null) return;
@@ -549,6 +594,7 @@ function renderAdmin() {
       </div>
     </main>`;
   document.querySelector("#back-button").addEventListener("click", async () => {
+    rememberCurrentViewScroll("admin");
     state.bootstrap.profiles = await api("./api/profiles");
     if (!state.bootstrap.external)
       state.platforms = await api("./api/admin/platforms");
@@ -575,6 +621,7 @@ function renderAdmin() {
     .querySelector("#reindex-now")
     ?.addEventListener("click", runManualReindex);
   void refreshIndexStatus();
+  restoreViewScroll();
 }
 
 async function refreshIndexStatus() {
@@ -820,6 +867,10 @@ async function launchGame(gameId, restoreState = null) {
         console.warn("[Retro Web] Could not update recent activity", error),
       );
     }
+    rememberCurrentViewScroll();
+    state.screen = "player";
+    currentGameId = game.id;
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     app.innerHTML = `
       <main class="player-view">
         <header class="player-toolbar">

@@ -734,7 +734,7 @@ export function createRetroApp(config, db, mode, indexWorker = null) {
     response.sendFile(path.join(publicRoot, "index.html"));
   });
   app.use((error, _request, response, _next) => {
-    logger.error("Error al procesar una solicitud", error);
+    logger.error("Error processing request", error);
     response.status(500).json({ error: "Retro Web request failed" });
   });
 
@@ -1366,12 +1366,12 @@ export function start() {
   }
 
   void indexWorker.runNow().catch((error) => {
-    logger.error("Fallo la indexación automática", error);
+    logger.error("Automatic indexing failed", error);
   });
   const indexInterval = setInterval(
     () => {
       void indexWorker.runNow().catch((error) => {
-        logger.error("Fallo la indexación automática", error);
+        logger.error("Automatic indexing failed", error);
       });
     },
     config.rom_index_interval_minutes * 60 * 1000,
