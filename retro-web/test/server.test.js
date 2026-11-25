@@ -966,7 +966,10 @@ test("library uses breadcrumb navigation and ordered sections", () => {
   assert.match(source, /id="back-profiles-library"/);
   assert.match(source, /breadcrumb-navigation/);
   assert.match(source, /id="back-library"/);
-  assert.match(source, /<span class="breadcrumb-current">\$\{t\("library"\)\}<\/span>/);
+  assert.match(
+    source,
+    /<span class="breadcrumb-current">\$\{t\("library"\)\}<\/span>/,
+  );
   const topbarEnd = source.indexOf('<main class="content">');
   const topbarSource = topbarEnd >= 0 ? source.slice(0, topbarEnd) : source;
   assert.doesNotMatch(topbarSource, /back-profiles-library/);
@@ -990,9 +993,15 @@ test("library navigation preserves scroll positions per view", () => {
   assert.match(source, /scrollPositions:\s*new Map\(\)/);
   assert.match(source, /function rememberCurrentViewScroll/);
   assert.match(source, /function restoreViewScroll/);
-  assert.match(source, /rememberCurrentViewScroll\(\);\s*state\.libraryPlatform/);
+  assert.match(
+    source,
+    /rememberCurrentViewScroll\(\);\s*state\.libraryPlatform/,
+  );
   assert.match(source, /rememberCurrentViewScroll\(\);\s*renderProfiles/);
   assert.match(source, /rememberCurrentViewScroll\(\);\s*if \(state\.screen/);
-  assert.match(source, /window\.scrollTo\(\{ top: 0, left: 0, behavior: "auto" \}\)/);
+  assert.match(
+    source,
+    /window\.scrollTo\(\{ top: 0, left: 0, behavior: "auto" \}\)/,
+  );
   assert.match(source, /restoreViewScroll\(\);/);
 });
