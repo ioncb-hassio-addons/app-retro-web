@@ -4,6 +4,13 @@
 
 - Git workflow: every new integration or change starts on a dedicated branch
   using `feature/`, `fix/`, or another appropriate prefix.
+- Branch synchronization workflow after an approved and merged PR:
+  1. Switch to `main`.
+  2. Run `git fetch origin main`.
+  3. Run `git pull --ff-only origin main`.
+  4. Verify the working tree is clean.
+  5. Create the next `feature/` or `fix/` branch from the updated `main`.
+  6. Do not reuse or continue work on the branch whose PR was merged.
 - Repository: `ioncb-hassio-addons/app-retro-web`.
 - Main app source: `retro-web/`.
 - Application name: `Retro Web`.

@@ -99,3 +99,18 @@ content changes, and marks deleted entries.
 
 Manual reindex endpoints are protected by existing Ingress/admin or elevated
 external-admin authorization.
+
+## ADR-013: Branch lifecycle after pull request merges
+
+Each approved pull request marks the end of its integration branch.
+
+After merge:
+
+1. Switch to `main`.
+2. Fetch `origin/main`.
+3. Fast-forward `main` with `git pull --ff-only origin main`.
+4. Verify the working tree is clean.
+5. Create a fresh `feature/` or `fix/` branch from updated `main`.
+
+Do not continue implementation on the merged branch. This prevents stale
+branches, repeated merge conflicts, and accidental divergence from `main`.
