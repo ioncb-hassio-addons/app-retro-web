@@ -1002,6 +1002,16 @@ test("library uses breadcrumb navigation and ordered sections", () => {
   assert.ok(recentIndex > platformsIndex);
 });
 
+test("changing profile resets the selected library platform", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const source = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");
+
+  assert.match(
+    source,
+    /async function selectProfile[\s\S]*?rememberCurrentViewScroll\("profiles"\);\s*state\.libraryPlatform = null;/,
+  );
+});
+
 test("library navigation preserves scroll positions per view", () => {
   const publicDirectory = path.join(process.cwd(), "public");
   const source = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");
