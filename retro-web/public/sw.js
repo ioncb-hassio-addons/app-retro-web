@@ -1,10 +1,12 @@
-const CACHE_NAME = "retro-web-shell-v3";
-const CORE_CACHE_NAME = "retro-web-emulator-v3";
+const CACHE_NAME = "retro-web-shell-v4";
+const CORE_CACHE_NAME = "retro-web-emulator-v4";
 const SHELL = [
   "./",
   "./index.html",
   "./app.js",
   "./i18n.js",
+  "./i18n/es.json",
+  "./i18n/en.json",
   "./local-store.js",
   "./styles.css",
 ];

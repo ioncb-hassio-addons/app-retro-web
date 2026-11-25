@@ -871,3 +871,23 @@ test("unified local storage dialog exposes separate cleanup actions", () => {
   assert.match(source, /primary:\s*t\("yes"\)/);
   assert.match(source, /cancel:\s*t\("no"\)/);
 });
+
+test("i18n dictionaries are split by language and have matching keys", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const i18nSource = fs.readFileSync(
+    path.join(publicDirectory, "i18n.js"),
+    "utf8",
+  );
+  const spanish = JSON.parse(
+    fs.readFileSync(path.join(publicDirectory, "i18n", "es.json"), "utf8"),
+  );
+  const english = JSON.parse(
+    fs.readFileSync(path.join(publicDirectory, "i18n", "en.json"), "utf8"),
+  );
+
+  assert.doesNotMatch(i18nSource, /const dictionaries\s*=\s*\{\s*es\s*:/);
+  assert.match(i18nSource, /i18n\/es\.json/);
+  assert.match(i18nSource, /i18n\/en\.json/);
+  assert.deepEqual(Object.keys(spanish).sort(), Object.keys(english).sort());
+  assert.ok(Object.keys(spanish).length > 100);
+});

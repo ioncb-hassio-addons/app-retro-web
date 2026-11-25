@@ -26,6 +26,9 @@
 - External listener: HTTPS port `8098`.
 - Persistent app data: `/data`.
 - UI languages: Spanish and English.
+- UI dictionaries are stored separately at `retro-web/public/i18n/es.json`
+  and `retro-web/public/i18n/en.json`; `i18n.js` imports both and exposes
+  locale selection and translation helpers.
 
 ## Implementation history
 

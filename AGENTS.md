@@ -15,6 +15,7 @@ under `/data`; the app must not download or distribute copyrighted media.
 - `retro-web/scripts/`: asset synchronization and build-time transformations.
 - `retro-web/test/server.test.js`: Node test suite.
 - `retro-web/translations/`: Home Assistant option translations.
+- `retro-web/public/i18n/`: UI dictionary JSON files by language.
 - `retro-web/DOCS.md`: end-user app documentation.
 - `.github/workflows/`: shared CI and release workflows.
 
