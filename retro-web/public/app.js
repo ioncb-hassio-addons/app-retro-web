@@ -230,6 +230,7 @@ function renderProfiles() {
 async function selectProfile(profileId) {
   try {
     rememberCurrentViewScroll("profiles");
+    state.libraryPlatform = null;
     await api("./api/profiles/select", {
       method: "POST",
       headers: { "content-type": "application/json" },
