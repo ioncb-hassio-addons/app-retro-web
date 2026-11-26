@@ -7,7 +7,6 @@ const SHELL = [
   "./i18n.js",
   "./i18n/es.json",
   "./i18n/en.json",
-  "./avatars/avatar_02.webp",
   "./platforms/arcade.webp",
   "./platforms/gba.webp",
   "./platforms/gbc.webp",

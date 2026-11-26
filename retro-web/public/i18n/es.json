@@ -131,5 +131,16 @@
   "changeProfileImage": "Cambiar imagen",
   "saveAvatar": "Guardar imagen",
   "profileUpdated": "Perfil actualizado",
-  "avatarImageRequired": "Selecciona una imagen válida"
+  "avatarImageRequired": "Selecciona una imagen válida",
+  "systemAvatarsHelp": "Carga avatares WebP en /data/avatars/system. Puedes usar nombres avatar_01.webp a avatar_99.webp.",
+  "systemAvatarFile": "Archivo WebP",
+  "systemAvatarFilename": "Nombre del avatar",
+  "uploadSystemAvatar": "Cargar avatar del sistema",
+  "systemAvatarUploaded": "Avatar del sistema cargado",
+  "deleteSystemAvatar": "Eliminar avatar del sistema",
+  "deleteSystemAvatarConfirm": "¿Eliminar {filename} de los avatares del sistema?",
+  "systemAvatarDeleted": "Avatar del sistema eliminado",
+  "delete": "Eliminar",
+  "yes": "Sí",
+  "no": "No"
 }

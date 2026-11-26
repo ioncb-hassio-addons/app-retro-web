@@ -112,7 +112,7 @@ function profileAvatarMarkup(profile, className = "profile-avatar") {
     return `<span class="${className}"><img src="${escapeHtml(`./api/profiles/${profile.id}/avatar`)}" alt="${escapeHtml(profile.name)}" /></span>`;
   }
   if (/^avatar_\d{2}\.webp$/i.test(profile?.avatar || "")) {
-    return `<span class="${className}"><img src="${escapeHtml(`./avatars/${profile.avatar}`)}" alt="${escapeHtml(profile.name)}" /></span>`;
+    return `<span class="${className}"><img src="${escapeHtml(`./api/avatars/${profile.avatar}`)}" alt="${escapeHtml(profile.name)}" /></span>`;
   }
   return `<span class="${className}">${escapeHtml(profile?.avatar || "🎮")}</span>`;
 }
@@ -173,7 +173,7 @@ function systemAvatarOptions(selectedAvatar, onSelect) {
         .map(
           (avatar) => `
             <button type="button" class="avatar-option${selectedAvatar === avatar ? " selected" : ""}" data-avatar-value="${escapeHtml(avatar)}" aria-label="${escapeHtml(avatar)}">
-              <img src="${escapeHtml(`./avatars/${avatar}`)}" alt="" />
+              <img src="${escapeHtml(`./api/avatars/${avatar}`)}" alt="" />
             </button>`,
         )
         .join("")}
@@ -791,6 +791,31 @@ async function renderAdmin() {
               .join("")}
           </div>
         </section>
+        <section class="panel system-avatar-admin-panel">
+          <h2>${t("systemAvatars")}</h2>
+          <p class="muted">${t("systemAvatarsHelp")}</p>
+          <form id="system-avatar-form">
+            <label>${t("systemAvatarFile")}
+              <input name="file" type="file" accept="image/webp" required />
+            </label>
+            <label>${t("systemAvatarFilename")}
+              <input name="filename" value="avatar_02.webp" pattern="avatar_[0-9]{2}\\.webp" maxlength="13" required />
+            </label>
+            <button class="primary" type="submit">${t("uploadSystemAvatar")}</button>
+          </form>
+          <div class="system-avatar-admin-list">
+            ${state.systemAvatars
+              .map(
+                (avatar) => `
+                  <div class="system-avatar-admin-card">
+                    <img src="${escapeHtml(`./api/avatars/${avatar}`)}" alt="" />
+                    <strong>${escapeHtml(avatar)}</strong>
+                    <button type="button" class="danger" data-delete-system-avatar="${escapeHtml(avatar)}">${t("delete")}</button>
+                  </div>`,
+              )
+              .join("")}
+          </div>
+        </section>
         <section class="panel">
           <h2>${t("addRom")}</h2>
           <form id="rom-form">
@@ -862,6 +887,14 @@ async function renderAdmin() {
   document
     .querySelector("#profile-form")
     .addEventListener("submit", createProfile);
+  document
+    .querySelector("#system-avatar-form")
+    ?.addEventListener("submit", uploadSystemAvatar);
+  document.querySelectorAll("[data-delete-system-avatar]").forEach((button) => {
+    button.addEventListener("click", () =>
+      deleteSystemAvatar(button.dataset.deleteSystemAvatar),
+    );
+  });
   document.querySelector("#rom-form").addEventListener("submit", uploadRom);
   document.querySelector("#bios-form").addEventListener("submit", uploadBios);
   document
@@ -1066,6 +1099,41 @@ async function createProfile(event) {
         state.pendingProfileAvatarFile = file;
       },
     );
+    await renderAdmin();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function uploadSystemAvatar(event) {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
+  try {
+    await api("./api/admin/avatars", {
+      method: "POST",
+      body: form,
+    });
+    toast(t("systemAvatarUploaded"));
+    await renderAdmin();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function deleteSystemAvatar(filename) {
+  const choice = await showConfirmDialog({
+    title: t("deleteSystemAvatar"),
+    message: tf("deleteSystemAvatarConfirm", { filename }),
+    primary: t("yes"),
+    secondary: t("no"),
+  });
+  if (choice !== "primary") return;
+  try {
+    await api(`./api/admin/avatars/${encodeURIComponent(filename)}`, {
+      method: "DELETE",
+    });
+    toast(t("systemAvatarDeleted"));
     await renderAdmin();
   } catch (error) {
     toast(error.message, true);

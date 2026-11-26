@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { createDatabase } from "../app/database.js";
 import { loadConfig } from "../app/config.js";
-import { ensureStorage } from "../app/storage.js";
+import { ensureStorage, seedDefaultSystemAvatars } from "../app/storage.js";
 import { createRetroApp } from "../app/server.js";
 import { normalizeTitle, titleFromFilename } from "../app/titles.js";
 import { createHash } from "node:crypto";
@@ -59,6 +59,49 @@ async function json(response) {
   return response.json();
 }
 
+test("first installation seeds the 40 default system avatars once", () => {
+  const dataPath = fs.mkdtempSync(path.join(os.tmpdir(), "retro-web-avatars-"));
+  try {
+    ensureStorage(dataPath);
+    const systemDirectory = path.join(dataPath, "avatars", "system");
+    const avatars = fs
+      .readdirSync(systemDirectory)
+      .filter((filename) => /^avatar_\d{2}\.webp$/i.test(filename))
+      .sort();
+
+    assert.equal(avatars.length, 40);
+    assert.equal(avatars[0], "avatar_01.webp");
+    assert.equal(avatars[39], "avatar_40.webp");
+
+    fs.writeFileSync(
+      path.join(systemDirectory, "avatar_02.webp"),
+      Buffer.from("administrator-avatar"),
+    );
+    seedDefaultSystemAvatars(dataPath);
+    assert.equal(
+      fs.readFileSync(path.join(systemDirectory, "avatar_02.webp"), "utf8"),
+      "administrator-avatar",
+    );
+  } finally {
+    fs.rmSync(dataPath, { recursive: true, force: true });
+  }
+});
+
+test("packaged default avatars have no transparent bottom margin", () => {
+  const defaultsDirectory = path.join(process.cwd(), "app", "default-avatars");
+  const avatars = fs
+    .readdirSync(defaultsDirectory)
+    .filter((filename) => /^avatar_\d{2}\.webp$/i.test(filename))
+    .sort();
+
+  assert.equal(avatars.length, 40);
+  for (const filename of avatars) {
+    const buffer = fs.readFileSync(path.join(defaultsDirectory, filename));
+    assert.equal(buffer.subarray(0, 4).toString("ascii"), "RIFF");
+    assert.equal(buffer.subarray(8, 12).toString("ascii"), "WEBP");
+  }
+});
+
 test("external access is disabled until valid credentials are supplied", async () => {
   const fixture = await setup();
   try {
@@ -90,6 +133,27 @@ test("external access is disabled until valid credentials are supplied", async (
 test("profile avatars support system selection and custom WebP uploads", async () => {
   const fixture = await setup();
   try {
+    const webpSignature = Buffer.concat([
+      Buffer.from("RIFF"),
+      Buffer.from([36, 0, 0, 0]),
+      Buffer.from("WEBP"),
+    ]);
+
+    assert.ok(
+      (await json(await fetch(`${fixture.ingress.base}/api/avatars`))).includes(
+        "avatar_02.webp",
+      ),
+    );
+
+    const systemAvatarResponse = await fetch(
+      `${fixture.ingress.base}/api/avatars/avatar_02.webp`,
+    );
+    assert.equal(systemAvatarResponse.status, 200);
+    assert.match(
+      systemAvatarResponse.headers.get("content-type") || "",
+      /webp/,
+    );
+
     const systemForm = new FormData();
     systemForm.append("name", "System Avatar");
     systemForm.append("avatar", "avatar_02.webp");
@@ -108,15 +172,9 @@ test("profile avatars support system selection and custom WebP uploads", async (
     customForm.append("avatar", "custom");
     customForm.append("color", "#ff3b6b");
     customForm.append("language", "en");
-    const avatarPath = path.join(
-      process.cwd(),
-      "public",
-      "avatars",
-      "avatar_02.webp",
-    );
     customForm.append(
       "avatarFile",
-      new Blob([fs.readFileSync(avatarPath)], { type: "image/webp" }),
+      new Blob([webpSignature], { type: "image/webp" }),
       "avatar.webp",
     );
     const customResponse = await fetch(
@@ -161,6 +219,17 @@ test("profile avatars support system selection and custom WebP uploads", async (
       { method: "PATCH", body: invalidForm },
     );
     assert.equal(invalidResponse.status, 400);
+
+    const deleteResponse = await fetch(
+      `${fixture.ingress.base}/api/admin/avatars/avatar_02.webp`,
+      { method: "DELETE" },
+    );
+    assert.equal(deleteResponse.status, 204);
+    assert.equal(
+      (await fetch(`${fixture.ingress.base}/api/avatars/avatar_02.webp`))
+        .status,
+      404,
+    );
   } finally {
     await fixture.ingress.close();
     await fixture.external.close();
@@ -1109,13 +1178,13 @@ test("profile images support system avatars and custom WebP uploads", () => {
     "utf8",
   );
   const swSource = fs.readFileSync(path.join(publicDirectory, "sw.js"), "utf8");
-  const avatars = fs
-    .readdirSync(path.join(publicDirectory, "avatars"))
-    .filter((filename) => /^avatar_\d{2}\.webp$/i.test(filename))
-    .sort();
+  const stylesSource = fs.readFileSync(
+    path.join(publicDirectory, "styles.css"),
+    "utf8",
+  );
 
-  assert.ok(avatars.includes("avatar_02.webp"));
   assert.match(appSource, /profileAvatarMarkup/);
+  assert.match(appSource, /\/api\/avatars\/\$\{avatar\}/);
   assert.match(appSource, /convertProfileAvatarToWebp/);
   assert.match(appSource, /canvas\.width = 345/);
   assert.match(appSource, /canvas\.height = 345/);
@@ -1123,9 +1192,21 @@ test("profile images support system avatars and custom WebP uploads", () => {
   assert.match(serverSource, /upload\.single\("avatarFile"\)/);
   assert.match(serverSource, /isWebpBuffer/);
   assert.match(serverSource, /\/api\/profiles\/:profileId\/avatar/);
+  assert.match(serverSource, /\/api\/admin\/avatars/);
+  assert.match(serverSource, /avatars[\\/"',\]\s]+system/);
   assert.match(serverSource, /normalizeProfileAvatar[\s\S]*🎮/);
-  assert.match(storageSource, /"avatars"/);
-  assert.match(swSource, /avatars\/avatar_02\.webp/);
+  assert.match(storageSource, /"avatars\/system"/);
+  assert.match(storageSource, /"avatars\/custom"/);
+  assert.match(
+    stylesSource,
+    /grid-template-columns:\s*repeat\(auto-fill,\s*88px\)/,
+  );
+  assert.match(
+    stylesSource,
+    /\.system-avatar-admin-card img\s*\{[\s\S]*width:\s*72px/,
+  );
+  assert.doesNotMatch(appSource, /public\/avatars|\.\/avatars\//);
+  assert.doesNotMatch(swSource, /avatars\/avatar_/);
 });
 
 test("library navigation preserves scroll positions per view", () => {
