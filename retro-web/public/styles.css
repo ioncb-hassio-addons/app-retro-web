@@ -25,70 +25,18 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  isolation: isolate;
   background:
     radial-gradient(
-      circle at 18% 18%,
-      rgba(76, 132, 255, 0.82),
-      transparent 34rem
-    ),
-    radial-gradient(
-      circle at 82% 12%,
-      rgba(168, 85, 247, 0.72),
+      circle at 10% 10%,
+      rgba(91, 141, 239, 0.22),
       transparent 32rem
     ),
     radial-gradient(
-      circle at 72% 82%,
-      rgba(255, 59, 107, 0.58),
-      transparent 34rem
+      circle at 90% 0%,
+      rgba(255, 59, 107, 0.18),
+      transparent 28rem
     ),
-    radial-gradient(
-      circle at 16% 88%,
-      rgba(245, 158, 11, 0.38),
-      transparent 30rem
-    ),
-    linear-gradient(145deg, #081a3d 0%, #24205c 48%, #5a173c 100%);
-  background-attachment: fixed;
-}
-
-body::before,
-body::after {
-  content: "";
-  position: fixed;
-  z-index: -1;
-  width: 36rem;
-  height: 36rem;
-  border-radius: 50%;
-  filter: blur(38px);
-  opacity: 0.34;
-  pointer-events: none;
-  animation: liquid-orb 24s ease-in-out infinite alternate;
-}
-
-body::before {
-  top: -12rem;
-  left: -8rem;
-  background: linear-gradient(135deg, #63a4ff, #9c58ff);
-}
-
-body::after {
-  right: -10rem;
-  bottom: -14rem;
-  background: linear-gradient(135deg, #ff5aa5, #ffb55c);
-  animation-duration: 28s;
-  animation-direction: alternate-reverse;
-}
-
-@keyframes liquid-orb {
-  0% {
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  50% {
-    transform: translate3d(12vw, 8vh, 0) scale(1.08);
-  }
-  100% {
-    transform: translate3d(-4vw, 16vh, 0) scale(0.96);
-  }
+    #070912;
 }
 
 button,
@@ -103,6 +51,16 @@ button {
 
 .app-shell {
   min-height: 100vh;
+}
+
+.app-shell:has(.login-card) {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: max(1rem, env(safe-area-inset-top)) 1rem
+    max(1rem, env(safe-area-inset-bottom));
+  box-sizing: border-box;
 }
 
 .loading-card {
@@ -123,11 +81,14 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem clamp(1rem, 4vw, 3rem);
+  padding: 0.5rem clamp(0.5rem, 4vw, 0.5rem);
   border-bottom: 1px solid var(--border);
   background: rgba(7, 9, 18, 0.82);
   backdrop-filter: blur(18px);
+}
+
+.app-shell:has(.login-card) .topbar {
+  display: none;
 }
 
 .brand {
@@ -187,7 +148,7 @@ button {
   padding: 1.25rem;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 24px;
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.03);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
   box-shadow:
@@ -223,7 +184,7 @@ button {
   transform: translateY(-3px);
   border-color: rgba(255, 255, 255, 0.58);
   outline: none;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.1);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.62),
     0 12px 38px rgba(0, 0, 0, 0.22);
@@ -233,6 +194,21 @@ button {
 .game-card:active,
 .platform-card:active {
   transform: scale(0.98);
+}
+
+.profile-card,
+.game-card,
+.platform-card {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  -webkit-user-drag: none;
+}
+
+.profile-card img,
+.game-card img,
+.platform-card img {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-drag: none;
 }
 
 .profile-avatar {
@@ -469,7 +445,7 @@ button {
   position: relative;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 26px;
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.03);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
   box-shadow:
@@ -489,7 +465,7 @@ button {
   transform: translateY(-3px);
   border-color: rgba(255, 255, 255, 0.58);
   outline: none;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.1);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.62),
     0 12px 38px rgba(0, 0, 0, 0.22);
@@ -529,7 +505,6 @@ button {
   align-items: center;
   gap: 0.45rem;
   margin: -1.25rem 0 1.5rem;
-  padding: 0.65rem 0;
   color: var(--muted);
   font-size: 0.92rem;
 }
@@ -569,7 +544,7 @@ button {
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 26px;
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.03);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
   box-shadow:
@@ -589,7 +564,7 @@ button {
   transform: translateY(-3px);
   border-color: rgba(255, 255, 255, 0.58);
   outline: none;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.1);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.62),
     0 12px 38px rgba(0, 0, 0, 0.22);
@@ -668,6 +643,7 @@ button {
 
 .profile-language {
   margin-top: 1rem;
+  margin-bottom: 0.3rem;
 }
 
 .field-help {
@@ -726,11 +702,13 @@ button {
   line-height: 1.2;
   text-align: left;
   -webkit-box-orient: vertical;
+  line-clamp: 3;
   -webkit-line-clamp: 3;
 }
 
 .chip {
   display: inline-flex;
+  margin-bottom: 0.1rem;
   padding: 0.25rem 0.6rem;
   border-radius: 999px;
   background: rgba(91, 141, 239, 0.16);
@@ -753,9 +731,10 @@ button {
 }
 
 .login-card {
-  width: min(440px, calc(100% - 2rem));
-  margin: 12vh auto 0;
+  width: min(440px, 100%);
+  margin: 0;
   padding: 2rem;
+  box-sizing: border-box;
 }
 
 .panel {
@@ -865,6 +844,31 @@ select:focus {
   padding: 0.5rem 0.65rem;
 }
 
+.player-toolbar-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 40px;
+}
+
+.toolbar-action-icon {
+  display: none;
+  line-height: 1;
+}
+
+.toolbar-label svg,
+.toolbar-action-icon svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .player-stage {
   position: relative;
   display: grid;
@@ -914,11 +918,6 @@ select:focus {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  body::before,
-  body::after {
-    animation: none;
-  }
-
   .profile-card,
   .game-card,
   .platform-card {
@@ -1065,6 +1064,10 @@ body:has(.player-view) {
     align-items: flex-start;
   }
 
+  .brand-title {
+    display: none;
+  }
+
   .topbar-actions {
     flex-wrap: wrap;
     justify-content: flex-end;
@@ -1075,13 +1078,48 @@ body:has(.player-view) {
   }
 
   .player-toolbar {
-    align-items: stretch;
-    flex-direction: column;
+    min-height: 48px;
+    align-items: center;
+    flex-direction: row;
+    padding: 0.35rem 0.5rem;
+  }
+
+  .player-toolbar > strong {
+    display: none;
   }
 
   .player-toolbar .row {
+    width: 100%;
     min-width: 0;
-    justify-content: space-between;
+    flex: 1;
+    gap: 0.35rem;
+  }
+
+  .player-slot-control {
+    min-width: 54px;
+  }
+
+  .player-toolbar select {
+    min-width: 48px;
+    min-height: 40px;
+    height: 40px;
+    padding: 0.35rem 0.45rem;
+  }
+
+  .player-toolbar-action {
+    width: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    height: 40px;
+    padding: 0;
+  }
+
+  .toolbar-action-icon {
+    display: inline;
+  }
+
+  .toolbar-action-text {
+    display: none;
   }
 }
 
@@ -1168,6 +1206,6 @@ body:has(.player-view) {
   }
 
   #player .ejs_start_button {
-    bottom: 0.6rem;
+    bottom: 4rem;
   }
 }
