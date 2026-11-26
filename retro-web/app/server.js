@@ -72,6 +72,18 @@ function resolveContainedFile(rootDirectory, relativePath) {
   return resolved;
 }
 
+export function rateLimitKey(request, db, mode) {
+  const session = getSession(db, request);
+  if (session?.profile_id) return `profile:${session.profile_id}`;
+  if (session?.token_hash) return `session:${session.token_hash}`;
+  const profileId =
+    getCookie(request, "retro_web_profile") ||
+    request.get("x-profile-id") ||
+    "";
+  if (/^[0-9a-f-]{36}$/i.test(profileId)) return `profile:${profileId}`;
+  return `ip:${String(request.ip || "unknown")}`;
+}
+
 export function createRetroApp(config, db, mode, indexWorker = null) {
   const app = express();
   app.locals.db = db;
@@ -79,10 +91,11 @@ export function createRetroApp(config, db, mode, indexWorker = null) {
   const logger = createLogger(config);
   const avatarLimiter = rateLimit({
     windowMs: 60_000,
-    limit: 30,
+    limit: 300,
     standardHeaders: "draft-8",
     legacyHeaders: false,
     message: { error: "Too many avatar requests" },
+    keyGenerator: (request) => rateLimitKey(request, db, mode),
   });
   const romIndexWorker = indexWorker || createIndexWorker({ config, db });
   app.locals.indexWorker = romIndexWorker;
@@ -269,6 +282,7 @@ export function createRetroApp(config, db, mode, indexWorker = null) {
       response.status(404).json({ error: "Avatar not found" });
       return;
     }
+    response.set("Cache-Control", "private, max-age=3600, must-revalidate");
     response.type("image/webp").sendFile(avatarPath);
   });
 
@@ -296,6 +310,7 @@ export function createRetroApp(config, db, mode, indexWorker = null) {
         response.status(404).json({ error: "Avatar not found" });
         return;
       }
+      response.set("Cache-Control", "private, max-age=3600, must-revalidate");
       response.type("image/webp").sendFile(avatarPath);
     },
   );
@@ -815,10 +830,10 @@ export function createRetroApp(config, db, mode, indexWorker = null) {
   );
 
   if (mode === "ingress") {
-    mountAdminRoutes(app, config, db, upload, avatarUpload);
+    mountAdminRoutes(app, config, db, upload, avatarUpload, mode);
   } else if (config.allow_external_rom_upload) {
     app.use("/api/admin", requireExternalAdmin(config, db));
-    mountAdminRoutes(app, config, db, upload, avatarUpload);
+    mountAdminRoutes(app, config, db, upload, avatarUpload, mode);
   }
 
   if (mode === "external" && !config.allow_external_rom_upload) {
@@ -890,13 +905,30 @@ function removeCustomProfileAvatar(dataPath, profileId) {
   if (avatarPath) fs.rmSync(avatarPath, { force: true });
 }
 
-function mountAdminRoutes(app, config, db, upload, avatarUpload) {
+function randomProfileColor() {
+  const palette = [
+    "#ff3b6b",
+    "#5b8def",
+    "#23b89a",
+    "#f59e0b",
+    "#a855f7",
+    "#ec4899",
+    "#14b8a6",
+    "#ef4444",
+    "#8b5cf6",
+    "#22c55e",
+  ];
+  return palette[Math.floor(Math.random() * palette.length)];
+}
+
+function mountAdminRoutes(app, config, db, upload, avatarUpload, mode) {
   const avatarMutationLimiter = rateLimit({
     windowMs: 60_000,
     limit: 30,
     standardHeaders: "draft-8",
     legacyHeaders: false,
     message: { error: "Too many avatar changes" },
+    keyGenerator: (request) => rateLimitKey(request, db, mode),
   });
   const profileMutationLimiter = rateLimit({
     windowMs: 60_000,
@@ -904,6 +936,7 @@ function mountAdminRoutes(app, config, db, upload, avatarUpload) {
     standardHeaders: "draft-8",
     legacyHeaders: false,
     message: { error: "Too many profile changes" },
+    keyGenerator: (request) => rateLimitKey(request, db, mode),
   });
   app.get("/api/admin/index/status", (_request, response) => {
     response.json(app.locals.indexWorker.getStatus());
@@ -1005,7 +1038,7 @@ function mountAdminRoutes(app, config, db, upload, avatarUpload) {
       );
       const color = /^#[0-9a-f]{6}$/i.test(request.body?.color)
         ? request.body.color
-        : "#5b8def";
+        : randomProfileColor();
       if (!name || name.length > 40) {
         response.status(400).json({ error: "Invalid profile name" });
         return;

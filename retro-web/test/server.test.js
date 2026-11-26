@@ -6,7 +6,7 @@ import test from "node:test";
 import { createDatabase } from "../app/database.js";
 import { loadConfig } from "../app/config.js";
 import { ensureStorage, seedDefaultSystemAvatars } from "../app/storage.js";
-import { createRetroApp } from "../app/server.js";
+import { createRetroApp, rateLimitKey } from "../app/server.js";
 import { normalizeTitle, titleFromFilename } from "../app/titles.js";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -58,6 +58,68 @@ async function json(response) {
   assert.ok(response.headers.get("content-type")?.includes("application/json"));
   return response.json();
 }
+
+test("new profiles use a random valid default color", async () => {
+  const fixture = await setup();
+  try {
+    const form = new FormData();
+    form.append("name", "Random Color");
+    form.append("avatar", "🎮");
+    form.append("language", "es");
+    const response = await fetch(`${fixture.ingress.base}/api/admin/profiles`, {
+      method: "POST",
+      body: form,
+    });
+    assert.equal(response.status, 201);
+    const profile = await json(response);
+    assert.match(profile.color, /^#[0-9a-f]{6}$/i);
+  } finally {
+    await fixture.ingress.close();
+    await fixture.external.close();
+    fixture.db.close();
+    fs.rmSync(fixture.dataPath, { recursive: true, force: true });
+  }
+});
+
+test("avatar rate limits are separated by profile and fall back to IP", () => {
+  const request = {
+    ip: "127.0.0.1",
+    headers: {
+      cookie: "retro_web_profile=11111111-1111-1111-1111-111111111111",
+    },
+    get(name) {
+      if (name === "x-profile-id") return "";
+      return "";
+    },
+  };
+  assert.equal(
+    rateLimitKey(request, null, "ingress"),
+    "profile:11111111-1111-1111-1111-111111111111",
+  );
+
+  const secondProfileRequest = {
+    ip: "127.0.0.1",
+    headers: {
+      cookie: "retro_web_profile=22222222-2222-2222-2222-222222222222",
+    },
+    get() {
+      return "";
+    },
+  };
+  assert.equal(
+    rateLimitKey(secondProfileRequest, null, "ingress"),
+    "profile:22222222-2222-2222-2222-222222222222",
+  );
+
+  const noProfileRequest = {
+    ip: "127.0.0.2",
+    headers: { cookie: "" },
+    get() {
+      return "";
+    },
+  };
+  assert.equal(rateLimitKey(noProfileRequest, null, "ingress"), "ip:127.0.0.2");
+});
 
 test("first installation seeds the 40 default system avatars once", () => {
   const dataPath = fs.mkdtempSync(path.join(os.tmpdir(), "retro-web-avatars-"));
@@ -153,6 +215,10 @@ test("profile avatars support system selection and custom WebP uploads", async (
       systemAvatarResponse.headers.get("content-type") || "",
       /webp/,
     );
+    assert.match(
+      systemAvatarResponse.headers.get("cache-control") || "",
+      /private, max-age=3600, must-revalidate/,
+    );
 
     const systemForm = new FormData();
     systemForm.append("name", "System Avatar");
@@ -190,6 +256,10 @@ test("profile avatars support system selection and custom WebP uploads", async (
     );
     assert.equal(avatarResponse.status, 200);
     assert.match(avatarResponse.headers.get("content-type") || "", /webp/);
+    assert.match(
+      avatarResponse.headers.get("cache-control") || "",
+      /private, max-age=3600, must-revalidate/,
+    );
 
     const patchForm = new FormData();
     patchForm.append("avatar", "avatar_02.webp");
@@ -242,7 +312,7 @@ test("profile avatars support system selection and custom WebP uploads", async (
       404,
     );
 
-    for (let index = 0; index < 31; index += 1) {
+    for (let index = 0; index < 301; index += 1) {
       await fetch(`${fixture.ingress.base}/api/avatars`);
     }
     const limitedResponse = await fetch(`${fixture.ingress.base}/api/avatars`);
@@ -1168,6 +1238,60 @@ test("library uses breadcrumb navigation and ordered sections", () => {
   assert.ok(continueIndex >= 0);
   assert.ok(platformsIndex > continueIndex);
   assert.ok(recentIndex > platformsIndex);
+});
+
+test("new profile form uses a random default color", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "public", "app.js"),
+    "utf8",
+  );
+  assert.match(source, /function randomProfileColor/);
+  assert.match(source, /const defaultProfileColor = randomProfileColor\(\)/);
+  assert.match(
+    source,
+    /\$\{t\("color"\)\}<input name="color" type="color" value="\$\{defaultProfileColor\}"/,
+  );
+});
+
+test("profile editor edits name, color, and avatar", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const source = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");
+
+  assert.match(source, /id="edit-profile-name"/);
+  assert.match(source, /id="edit-profile-color"/);
+  assert.match(source, /form\.append\("name", editName\)/);
+  assert.match(source, /form\.append\("color", editColor\)/);
+  assert.match(source, /\$\{t\("edit"\)\}/);
+  assert.match(source, /\$\{t\("save"\)\}/);
+  assert.match(source, /profile-form-fields/);
+  assert.match(source, /profile-avatar-fields/);
+  assert.doesNotMatch(source, /\$\{t\("changeProfileImage"\)\}/);
+  assert.doesNotMatch(source, /\$\{t\("saveAvatar"\)\}/);
+});
+
+test("profile color field is square and aligned", () => {
+  const styles = fs.readFileSync(
+    path.join(process.cwd(), "public", "styles.css"),
+    "utf8",
+  );
+  assert.match(
+    styles,
+    /\.profile-form-fields\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*48px;/,
+  );
+  assert.match(
+    styles,
+    /\.profile-form-fields label:first-child input\s*\{[\s\S]*width:\s*100%/,
+  );
+  assert.match(
+    styles,
+    /\.profile-form-fields input\[type="color"\]\s*\{[\s\S]*width:\s*48px;[\s\S]*height:\s*48px;/,
+  );
+  assert.match(
+    styles,
+    /\.profile-form-fields input\[type="color"\]::-webkit-color-swatch\s*\{[\s\S]*border-radius:\s*8px;/,
+  );
+  assert.match(styles, /\.profile-form-actions\s*\{[\s\S]*margin-top:\s*1rem;/);
+  assert.match(styles, /\.profile-edit-actions\s*\{[\s\S]*margin-top:\s*1rem;/);
 });
 
 test("changing profile resets the selected library platform", () => {

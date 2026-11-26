@@ -107,6 +107,22 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function randomProfileColor() {
+  const palette = [
+    "#ff3b6b",
+    "#5b8def",
+    "#23b89a",
+    "#f59e0b",
+    "#a855f7",
+    "#ec4899",
+    "#14b8a6",
+    "#ef4444",
+    "#8b5cf6",
+    "#22c55e",
+  ];
+  return palette[Math.floor(Math.random() * palette.length)];
+}
+
 function profileAvatarMarkup(profile, className = "profile-avatar") {
   if (profile?.avatar === "custom") {
     return `<span class="${className}"><img src="${escapeHtml(`./api/profiles/${profile.id}/avatar`)}" alt="${escapeHtml(profile.name)}" /></span>`;
@@ -240,9 +256,16 @@ async function openProfileAvatarDialog(profile) {
   dialog.className = "retro-dialog profile-avatar-dialog";
   dialog.innerHTML = `
     <form method="dialog">
-      <h2>${escapeHtml(t("profileImage"))}</h2>
-      <p>${escapeHtml(profile.name)}</p>
-      <div id="existing-profile-avatar-picker">
+      <h2>${escapeHtml(t("editProfile"))}</h2>
+      <div class="profile-form-fields">
+        <label>${t("name")}
+          <input id="edit-profile-name" name="name" maxlength="40" value="${escapeHtml(profile.name)}" required />
+        </label>
+        <label>${t("color")}
+          <input id="edit-profile-color" name="color" type="color" value="${escapeHtml(profile.color || "#5b8def")}" />
+        </label>
+      </div>
+      <div id="existing-profile-avatar-picker" class="profile-avatar-fields">
         <strong>${t("systemAvatars")}</strong>
         ${systemAvatarOptions(selectedAvatar)}
         <label class="avatar-upload">
@@ -257,9 +280,9 @@ async function openProfileAvatarDialog(profile) {
           }
         </div>
       </div>
-      <div class="dialog-actions">
+      <div class="dialog-actions profile-edit-actions">
         <button class="secondary" value="cancel">${t("cancel")}</button>
-        <button class="primary" value="save">${t("saveAvatar")}</button>
+        <button class="primary" value="save">${t("save")}</button>
       </div>
     </form>`;
   const cleanup = () => dialog.remove();
@@ -269,6 +292,16 @@ async function openProfileAvatarDialog(profile) {
       return;
     }
     const form = new FormData();
+    const editName = dialog.querySelector("#edit-profile-name")?.value?.trim();
+    const editColor = dialog.querySelector("#edit-profile-color")?.value;
+    if (!editName) {
+      toast(t("invalidProfileName"), true);
+      return;
+    }
+    form.append("name", editName);
+    if (/^#[0-9a-f]{6}$/i.test(editColor || "")) {
+      form.append("color", editColor);
+    }
     form.append("avatar", selectedAvatar);
     if (selectedFile) form.append("avatarFile", selectedFile);
     try {
@@ -755,6 +788,7 @@ async function renderAdmin() {
   await loadSystemAvatars();
   state.pendingProfileAvatar = "🎮";
   state.pendingProfileAvatarFile = null;
+  const defaultProfileColor = randomProfileColor();
   for (const url of coverBlobUrls) URL.revokeObjectURL(url);
   coverBlobUrls.clear();
   state.pendingCoverFile = null;
@@ -770,10 +804,14 @@ async function renderAdmin() {
         <section class="panel">
           <h2>${t("newProfile")}</h2>
           <form id="profile-form">
-            <label>${t("name")}<input name="name" maxlength="40" required /></label>
-            <div id="new-profile-avatar-picker"></div>
-            <label>${t("color")}<input name="color" type="color" value="#5b8def" /></label>
-            <button class="primary" type="submit">${t("createProfile")}</button>
+            <div class="profile-form-fields">
+              <label>${t("name")}<input name="name" maxlength="40" required /></label>
+              <label>${t("color")}<input name="color" type="color" value="${defaultProfileColor}" /></label>
+            </div>
+            <div id="new-profile-avatar-picker" class="profile-avatar-fields"></div>
+            <div class="profile-form-actions">
+              <button class="primary" type="submit">${t("createProfile")}</button>
+            </div>
           </form>
         </section>
         <section class="panel profile-admin-list-panel">
@@ -785,7 +823,7 @@ async function renderAdmin() {
                   <div class="profile-admin-card" style="--profile-color:${escapeHtml(profile.color)}">
                     ${profileAvatarMarkup(profile, "profile-avatar")}
                     <strong>${escapeHtml(profile.name)}</strong>
-                    <button type="button" class="secondary" data-edit-profile-avatar="${escapeHtml(profile.id)}">${t("changeProfileImage")}</button>
+                    <button type="button" class="secondary" data-edit-profile-avatar="${escapeHtml(profile.id)}">${t("edit")}</button>
                   </div>`,
               )
               .join("")}
@@ -1089,6 +1127,8 @@ async function createProfile(event) {
     state.bootstrap.profiles.push(profile);
     toast(t("profileCreated"));
     formElement.reset();
+    const nextColor = randomProfileColor();
+    formElement.elements.color.value = nextColor;
     state.pendingProfileAvatar = "🎮";
     state.pendingProfileAvatarFile = null;
     bindProfileAvatarPicker(

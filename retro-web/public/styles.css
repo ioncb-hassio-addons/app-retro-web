@@ -180,8 +180,8 @@ button {
 .avatar-picker {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(72px, 72px));
-  gap: 0.75rem;
-  margin: 0.75rem 0;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
 }
 
 .avatar-option {
@@ -219,6 +219,79 @@ button {
   border: 1px solid var(--border);
   border-radius: 24px;
   background: #101528;
+}
+
+.profile-form-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px;
+  align-items: end;
+  gap: 0.5rem;
+}
+
+.profile-form-fields label {
+  margin-bottom: 0;
+}
+
+.profile-form-fields label:first-child {
+  min-width: 0;
+}
+
+.profile-form-fields label:first-child input {
+  width: 100%;
+}
+
+.profile-form-fields label:last-child {
+  width: 48px;
+}
+
+.profile-form-fields input[type="color"] {
+  width: 48px;
+  height: 48px;
+  min-height: 48px;
+  padding: 4px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.profile-form-fields input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.profile-form-fields input[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: 8px;
+}
+
+.profile-form-fields input[type="color"]::-moz-color-swatch {
+  border: 0;
+  border-radius: 8px;
+}
+
+.profile-avatar-fields {
+  display: grid;
+  margin-top: 0.5rem;
+}
+
+.profile-avatar-fields .avatar-preview {
+  width: 172px;
+  max-width: 100%;
+  border-radius: 18px;
+}
+
+.profile-form-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 1rem;
+}
+
+.profile-edit-actions {
+  margin-top: 1rem;
+}
+
+@media (max-width: 620px) {
+  .profile-form-fields {
+    grid-template-columns: minmax(0, 1fr) 48px;
+  }
 }
 
 .profile-admin-list {
