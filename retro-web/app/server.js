@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import helmet from "helmet";
 import multer from "multer";
+import { rateLimit } from "express-rate-limit";
 import { loadConfig } from "./config.js";
 import {
   downloadLibretroCover,
@@ -40,11 +41,62 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicRoot = path.join(root, "public");
 const emulatorManifest = loadEmulatorManifest();
 
+function createInMemoryRateLimiter({
+  limit,
+  windowMs,
+  message = "Too many requests",
+}) {
+  const attempts = new Map();
+  return (request, response, next) => {
+    const key = String(request.ip || "unknown");
+    const now = Date.now();
+    const recent = (attempts.get(key) || []).filter(
+      (timestamp) => timestamp > now - windowMs,
+    );
+    if (recent.length >= limit) {
+      response.status(429).json({ error: message });
+      return;
+    }
+    recent.push(now);
+    attempts.set(key, recent);
+    next();
+  };
+}
+
+function resolveContainedFile(rootDirectory, relativePath) {
+  const root = path.resolve(rootDirectory);
+  const resolved = path.resolve(root, relativePath);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    return null;
+  }
+  return resolved;
+}
+
+export function rateLimitKey(request, db, mode) {
+  const session = getSession(db, request);
+  if (session?.profile_id) return `profile:${session.profile_id}`;
+  if (session?.token_hash) return `session:${session.token_hash}`;
+  const profileId =
+    getCookie(request, "retro_web_profile") ||
+    request.get("x-profile-id") ||
+    "";
+  if (/^[0-9a-f-]{36}$/i.test(profileId)) return `profile:${profileId}`;
+  return `ip:${String(request.ip || "unknown")}`;
+}
+
 export function createRetroApp(config, db, mode, indexWorker = null) {
   const app = express();
   app.locals.db = db;
   app.locals.mode = mode;
   const logger = createLogger(config);
+  const avatarLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 300,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    message: { error: "Too many avatar requests" },
+    keyGenerator: (request) => rateLimitKey(request, db, mode),
+  });
   const romIndexWorker = indexWorker || createIndexWorker({ config, db });
   app.locals.indexWorker = romIndexWorker;
   app.disable("x-powered-by");
@@ -79,6 +131,10 @@ export function createRetroApp(config, db, mode, indexWorker = null) {
   const upload = multer({
     dest: path.join(config.dataPath, "temp"),
     limits: { fileSize: config.max_upload_mb * 1024 * 1024 },
+  });
+  const avatarUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
   });
   const uploadSessions = new Map();
   const uploadCleanupTimer = setInterval(
@@ -194,6 +250,70 @@ export function createRetroApp(config, db, mode, indexWorker = null) {
     }
     response.json(listProfiles(db));
   });
+
+  app.get("/api/avatars", avatarLimiter, (_request, response) => {
+    const avatarDirectory = path.join(config.dataPath, "avatars", "system");
+    fs.mkdirSync(avatarDirectory, { recursive: true, mode: 0o700 });
+    const avatars = fs
+      .readdirSync(avatarDirectory, { withFileTypes: true })
+      .filter(
+        (entry) => entry.isFile() && /^avatar_\d{2}\.webp$/i.test(entry.name),
+      )
+      .map((entry) => entry.name)
+      .sort();
+    response.json(avatars);
+  });
+
+  app.get("/api/avatars/:filename", avatarLimiter, (request, response) => {
+    const filename = String(request.params.filename || "");
+    if (!/^avatar_\d{2}\.webp$/i.test(filename)) {
+      response.status(404).json({ error: "Avatar not found" });
+      return;
+    }
+    const avatarPath = resolveContainedFile(
+      path.join(config.dataPath, "avatars", "system"),
+      filename,
+    );
+    if (!avatarPath) {
+      response.status(404).json({ error: "Avatar not found" });
+      return;
+    }
+    if (!fs.existsSync(avatarPath)) {
+      response.status(404).json({ error: "Avatar not found" });
+      return;
+    }
+    response.set("Cache-Control", "private, max-age=3600, must-revalidate");
+    response.type("image/webp").sendFile(avatarPath);
+  });
+
+  app.get(
+    "/api/profiles/:profileId/avatar",
+    avatarLimiter,
+    (request, response) => {
+      const profileId = String(request.params.profileId || "");
+      if (!/^[0-9a-f-]{36}$/i.test(profileId)) {
+        response.status(404).json({ error: "Avatar not found" });
+        return;
+      }
+      const profile = db
+        .prepare("SELECT id, avatar FROM profiles WHERE id = ?")
+        .get(profileId);
+      if (!profile || profile.avatar !== "custom") {
+        response.status(404).json({ error: "Avatar not found" });
+        return;
+      }
+      const avatarPath = resolveContainedFile(
+        path.join(config.dataPath, "avatars", "custom"),
+        `${profile.id}.webp`,
+      );
+      if (!avatarPath || !fs.existsSync(avatarPath)) {
+        response.status(404).json({ error: "Avatar not found" });
+        return;
+      }
+      response.set("Cache-Control", "private, max-age=3600, must-revalidate");
+      response.type("image/webp").sendFile(avatarPath);
+    },
+  );
 
   app.post("/api/profiles/select", (request, response) => {
     const profileId = String(request.body?.profileId || "");
@@ -710,10 +830,10 @@ export function createRetroApp(config, db, mode, indexWorker = null) {
   );
 
   if (mode === "ingress") {
-    mountAdminRoutes(app, config, db, upload);
+    mountAdminRoutes(app, config, db, upload, avatarUpload, mode);
   } else if (config.allow_external_rom_upload) {
     app.use("/api/admin", requireExternalAdmin(config, db));
-    mountAdminRoutes(app, config, db, upload);
+    mountAdminRoutes(app, config, db, upload, avatarUpload, mode);
   }
 
   if (mode === "external" && !config.allow_external_rom_upload) {
@@ -741,7 +861,83 @@ export function createRetroApp(config, db, mode, indexWorker = null) {
   return app;
 }
 
-function mountAdminRoutes(app, config, db, upload) {
+function normalizeProfileAvatar(avatar, dataPath) {
+  const value = String(avatar || "").trim();
+  if (/^avatar_\d{2}\.webp$/i.test(value)) {
+    const systemDirectory = path.join(dataPath, "avatars", "system");
+    const avatarPath = resolveContainedFile(systemDirectory, value);
+    if (avatarPath && fs.existsSync(avatarPath)) return value;
+  }
+  if (value && value !== "custom" && value.length <= 12) return value;
+  return "🎮";
+}
+
+function isWebpBuffer(buffer) {
+  return (
+    Buffer.isBuffer(buffer) &&
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buffer.subarray(8, 12).toString("ascii") === "WEBP"
+  );
+}
+
+function storeCustomProfileAvatar(dataPath, profileId, buffer) {
+  if (!/^[0-9a-f-]{36}$/i.test(profileId)) {
+    throw new Error("Invalid profile ID");
+  }
+  if (buffer.length > 5 * 1024 * 1024) {
+    throw new Error("Profile avatar is too large");
+  }
+  if (!isWebpBuffer(buffer)) {
+    throw new Error("Profile avatar must be a WebP image");
+  }
+  const avatarDirectory = path.join(dataPath, "avatars", "custom");
+  const avatarPath = resolveContainedFile(avatarDirectory, `${profileId}.webp`);
+  if (!avatarPath) throw new Error("Invalid profile ID");
+  fs.mkdirSync(avatarDirectory, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(avatarPath, buffer, { mode: 0o600 });
+}
+
+function removeCustomProfileAvatar(dataPath, profileId) {
+  if (!/^[0-9a-f-]{36}$/i.test(profileId)) return;
+  const customDirectory = path.join(dataPath, "avatars", "custom");
+  const avatarPath = resolveContainedFile(customDirectory, `${profileId}.webp`);
+  if (avatarPath) fs.rmSync(avatarPath, { force: true });
+}
+
+function randomProfileColor() {
+  const palette = [
+    "#ff3b6b",
+    "#5b8def",
+    "#23b89a",
+    "#f59e0b",
+    "#a855f7",
+    "#ec4899",
+    "#14b8a6",
+    "#ef4444",
+    "#8b5cf6",
+    "#22c55e",
+  ];
+  return palette[Math.floor(Math.random() * palette.length)];
+}
+
+function mountAdminRoutes(app, config, db, upload, avatarUpload, mode) {
+  const avatarMutationLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 30,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    message: { error: "Too many avatar changes" },
+    keyGenerator: (request) => rateLimitKey(request, db, mode),
+  });
+  const profileMutationLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 30,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    message: { error: "Too many profile changes" },
+    keyGenerator: (request) => rateLimitKey(request, db, mode),
+  });
   app.get("/api/admin/index/status", (_request, response) => {
     response.json(app.locals.indexWorker.getStatus());
   });
@@ -766,42 +962,194 @@ function mountAdminRoutes(app, config, db, upload) {
     response.json(result);
   });
 
-  app.post("/api/admin/profiles", (request, response) => {
-    const profiles = listProfiles(db);
-    if (profiles.length >= config.profile_limit) {
-      response.status(409).json({ error: "Profile limit reached" });
-      return;
-    }
-    const name = String(request.body?.name || "").trim();
-    const avatar = String(request.body?.avatar || "🎮").slice(0, 12);
-    const color = /^#[0-9a-f]{6}$/i.test(request.body?.color)
-      ? request.body.color
-      : "#5b8def";
-    if (!name || name.length > 40) {
-      response.status(400).json({ error: "Invalid profile name" });
-      return;
-    }
-    const profile = {
-      id: crypto.randomUUID(),
-      name,
-      avatar,
-      color,
-      language: ["es", "en"].includes(request.body?.language)
+  app.post(
+    "/api/admin/avatars",
+    avatarMutationLimiter,
+    avatarUpload.single("file"),
+    (request, response) => {
+      if (!request.file) {
+        response.status(400).json({ error: "Avatar file is required" });
+        return;
+      }
+      const filename = String(request.body?.filename || "").trim();
+      if (!/^avatar_\d{2}\.webp$/i.test(filename)) {
+        response.status(400).json({
+          error:
+            "Avatar filename must use avatar_01.webp through avatar_99.webp",
+        });
+        return;
+      }
+      try {
+        const buffer = request.file.buffer;
+        if (buffer.length > 5 * 1024 * 1024) {
+          throw new Error("Avatar file is too large");
+        }
+        if (!isWebpBuffer(buffer)) {
+          throw new Error("Avatar file must be a WebP image");
+        }
+        const systemDirectory = path.join(config.dataPath, "avatars", "system");
+        const avatarPath = resolveContainedFile(systemDirectory, filename);
+        if (!avatarPath) {
+          throw new Error("Invalid avatar filename");
+        }
+        fs.mkdirSync(systemDirectory, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(avatarPath, buffer, { mode: 0o600 });
+        response.status(201).json({ filename });
+      } catch (error) {
+        response.status(400).json({ error: error.message });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/admin/avatars/:filename",
+    avatarMutationLimiter,
+    (request, response) => {
+      const filename = String(request.params.filename || "");
+      if (!/^avatar_\d{2}\.webp$/i.test(filename)) {
+        response.status(400).json({ error: "Invalid avatar filename" });
+        return;
+      }
+      const systemDirectory = path.join(config.dataPath, "avatars", "system");
+      const avatarPath = resolveContainedFile(systemDirectory, filename);
+      if (!avatarPath) {
+        response.status(400).json({ error: "Invalid avatar filename" });
+        return;
+      }
+      fs.rmSync(avatarPath, { force: true });
+      response.status(204).end();
+    },
+  );
+
+  app.post(
+    "/api/admin/profiles",
+    profileMutationLimiter,
+    avatarUpload.single("avatarFile"),
+    (request, response) => {
+      const profiles = listProfiles(db);
+      if (profiles.length >= config.profile_limit) {
+        response.status(409).json({ error: "Profile limit reached" });
+        return;
+      }
+      const name = String(request.body?.name || "").trim();
+      let avatar = normalizeProfileAvatar(
+        request.body?.avatar,
+        config.dataPath,
+      );
+      const color = /^#[0-9a-f]{6}$/i.test(request.body?.color)
+        ? request.body.color
+        : randomProfileColor();
+      if (!name || name.length > 40) {
+        response.status(400).json({ error: "Invalid profile name" });
+        return;
+      }
+      const profile = {
+        id: crypto.randomUUID(),
+        name,
+        avatar,
+        color,
+        language: ["es", "en"].includes(request.body?.language)
+          ? request.body.language
+          : "es",
+      };
+
+      if (request.file) {
+        try {
+          storeCustomProfileAvatar(
+            config.dataPath,
+            profile.id,
+            request.file.buffer,
+          );
+          avatar = "custom";
+        } catch (error) {
+          response.status(400).json({ error: error.message });
+          return;
+        }
+      }
+      profile.avatar = avatar;
+      db.prepare(
+        "INSERT INTO profiles (id, name, avatar, color, language, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        profile.id,
+        profile.name,
+        profile.avatar,
+        profile.color,
+        profile.language,
+        new Date().toISOString(),
+      );
+      response.status(201).json(profile);
+    },
+  );
+
+  app.patch(
+    "/api/admin/profiles/:profileId",
+    profileMutationLimiter,
+    avatarUpload.single("avatarFile"),
+    (request, response) => {
+      const profileId = String(request.params.profileId || "");
+      if (!/^[0-9a-f-]{36}$/i.test(profileId)) {
+        response.status(400).json({ error: "Invalid profile ID" });
+        return;
+      }
+      const existing = db
+        .prepare(
+          "SELECT id, name, avatar, color, language FROM profiles WHERE id = ?",
+        )
+        .get(profileId);
+      if (!existing) {
+        response.status(404).json({ error: "Profile not found" });
+        return;
+      }
+
+      const name =
+        request.body?.name === undefined
+          ? existing.name
+          : String(request.body.name).trim();
+      if (!name || name.length > 40) {
+        response.status(400).json({ error: "Invalid profile name" });
+        return;
+      }
+      const color = /^#[0-9a-f]{6}$/i.test(request.body?.color)
+        ? request.body.color
+        : existing.color;
+      const language = ["es", "en"].includes(request.body?.language)
         ? request.body.language
-        : "es",
-    };
-    db.prepare(
-      "INSERT INTO profiles (id, name, avatar, color, language, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run(
-      profile.id,
-      profile.name,
-      profile.avatar,
-      profile.color,
-      profile.language,
-      new Date().toISOString(),
-    );
-    response.status(201).json(profile);
-  });
+        : existing.language || "es";
+
+      let avatar = existing.avatar;
+      if (request.file) {
+        try {
+          storeCustomProfileAvatar(
+            config.dataPath,
+            profileId,
+            request.file.buffer,
+          );
+          avatar = "custom";
+        } catch (error) {
+          response.status(400).json({ error: error.message });
+          return;
+        }
+      } else if (request.body?.avatar !== undefined) {
+        if (String(request.body.avatar) === "custom") {
+          avatar = "custom";
+        } else {
+          avatar = normalizeProfileAvatar(request.body.avatar, config.dataPath);
+          removeCustomProfileAvatar(config.dataPath, profileId);
+        }
+      }
+
+      db.prepare(
+        "UPDATE profiles SET name = ?, avatar = ?, color = ?, language = ? WHERE id = ?",
+      ).run(name, avatar, color, language, profileId);
+      response.status(200).json({
+        id: profileId,
+        name,
+        avatar,
+        color,
+        language,
+      });
+    },
+  );
 
   app.post(
     "/api/admin/upload/rom",

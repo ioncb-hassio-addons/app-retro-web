@@ -5,8 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { createDatabase } from "../app/database.js";
 import { loadConfig } from "../app/config.js";
-import { ensureStorage } from "../app/storage.js";
-import { createRetroApp } from "../app/server.js";
+import { ensureStorage, seedDefaultSystemAvatars } from "../app/storage.js";
+import { createRetroApp, rateLimitKey } from "../app/server.js";
 import { normalizeTitle, titleFromFilename } from "../app/titles.js";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -59,6 +59,111 @@ async function json(response) {
   return response.json();
 }
 
+test("new profiles use a random valid default color", async () => {
+  const fixture = await setup();
+  try {
+    const form = new FormData();
+    form.append("name", "Random Color");
+    form.append("avatar", "🎮");
+    form.append("language", "es");
+    const response = await fetch(`${fixture.ingress.base}/api/admin/profiles`, {
+      method: "POST",
+      body: form,
+    });
+    assert.equal(response.status, 201);
+    const profile = await json(response);
+    assert.match(profile.color, /^#[0-9a-f]{6}$/i);
+  } finally {
+    await fixture.ingress.close();
+    await fixture.external.close();
+    fixture.db.close();
+    fs.rmSync(fixture.dataPath, { recursive: true, force: true });
+  }
+});
+
+test("avatar rate limits are separated by profile and fall back to IP", () => {
+  const request = {
+    ip: "127.0.0.1",
+    headers: {
+      cookie: "retro_web_profile=11111111-1111-1111-1111-111111111111",
+    },
+    get(name) {
+      if (name === "x-profile-id") return "";
+      return "";
+    },
+  };
+  assert.equal(
+    rateLimitKey(request, null, "ingress"),
+    "profile:11111111-1111-1111-1111-111111111111",
+  );
+
+  const secondProfileRequest = {
+    ip: "127.0.0.1",
+    headers: {
+      cookie: "retro_web_profile=22222222-2222-2222-2222-222222222222",
+    },
+    get() {
+      return "";
+    },
+  };
+  assert.equal(
+    rateLimitKey(secondProfileRequest, null, "ingress"),
+    "profile:22222222-2222-2222-2222-222222222222",
+  );
+
+  const noProfileRequest = {
+    ip: "127.0.0.2",
+    headers: { cookie: "" },
+    get() {
+      return "";
+    },
+  };
+  assert.equal(rateLimitKey(noProfileRequest, null, "ingress"), "ip:127.0.0.2");
+});
+
+test("first installation seeds the 40 default system avatars once", () => {
+  const dataPath = fs.mkdtempSync(path.join(os.tmpdir(), "retro-web-avatars-"));
+  try {
+    ensureStorage(dataPath);
+    const systemDirectory = path.join(dataPath, "avatars", "system");
+    const avatars = fs
+      .readdirSync(systemDirectory)
+      .filter((filename) => /^avatar_\d{2}\.webp$/i.test(filename))
+      .sort();
+
+    assert.equal(avatars.length, 40);
+    assert.equal(avatars[0], "avatar_01.webp");
+    assert.equal(avatars[39], "avatar_40.webp");
+
+    fs.writeFileSync(
+      path.join(systemDirectory, "avatar_02.webp"),
+      Buffer.from("administrator-avatar"),
+    );
+    seedDefaultSystemAvatars(dataPath);
+    assert.equal(
+      fs.readFileSync(path.join(systemDirectory, "avatar_02.webp"), "utf8"),
+      "administrator-avatar",
+    );
+  } finally {
+    fs.rmSync(dataPath, { recursive: true, force: true });
+  }
+});
+
+test("packaged default avatars have no transparent bottom margin", () => {
+  const defaultsDirectory = path.join(process.cwd(), "app", "default-avatars");
+  const avatars = fs
+    .readdirSync(defaultsDirectory)
+    .filter((filename) => /^avatar_\d{2}\.webp$/i.test(filename))
+    .sort();
+
+  assert.equal(avatars.length, 40);
+  for (const filename of avatars) {
+    const buffer = fs.readFileSync(path.join(defaultsDirectory, filename));
+    assert.equal(buffer.subarray(0, 4).toString("ascii"), "RIFF");
+    assert.equal(buffer.subarray(8, 12).toString("ascii"), "WEBP");
+  }
+});
+
 test("external access is disabled until valid credentials are supplied", async () => {
   const fixture = await setup();
   try {
@@ -79,6 +184,139 @@ test("external access is disabled until valid credentials are supplied", async (
     });
     assert.equal(login.status, 200);
     assert.ok(login.headers.get("set-cookie"));
+  } finally {
+    await fixture.ingress.close();
+    await fixture.external.close();
+    fixture.db.close();
+    fs.rmSync(fixture.dataPath, { recursive: true, force: true });
+  }
+});
+
+test("profile avatars support system selection and custom WebP uploads", async () => {
+  const fixture = await setup();
+  try {
+    const webpSignature = Buffer.concat([
+      Buffer.from("RIFF"),
+      Buffer.from([36, 0, 0, 0]),
+      Buffer.from("WEBP"),
+    ]);
+
+    assert.ok(
+      (await json(await fetch(`${fixture.ingress.base}/api/avatars`))).includes(
+        "avatar_02.webp",
+      ),
+    );
+
+    const systemAvatarResponse = await fetch(
+      `${fixture.ingress.base}/api/avatars/avatar_02.webp`,
+    );
+    assert.equal(systemAvatarResponse.status, 200);
+    assert.match(
+      systemAvatarResponse.headers.get("content-type") || "",
+      /webp/,
+    );
+    assert.match(
+      systemAvatarResponse.headers.get("cache-control") || "",
+      /private, max-age=3600, must-revalidate/,
+    );
+
+    const systemForm = new FormData();
+    systemForm.append("name", "System Avatar");
+    systemForm.append("avatar", "avatar_02.webp");
+    systemForm.append("color", "#5b8def");
+    systemForm.append("language", "es");
+    const systemResponse = await fetch(
+      `${fixture.ingress.base}/api/admin/profiles`,
+      { method: "POST", body: systemForm },
+    );
+    assert.equal(systemResponse.status, 201);
+    const systemProfile = await json(systemResponse);
+    assert.equal(systemProfile.avatar, "avatar_02.webp");
+
+    const customForm = new FormData();
+    customForm.append("name", "Custom Avatar");
+    customForm.append("avatar", "custom");
+    customForm.append("color", "#ff3b6b");
+    customForm.append("language", "en");
+    customForm.append(
+      "avatarFile",
+      new Blob([webpSignature], { type: "image/webp" }),
+      "avatar.webp",
+    );
+    const customResponse = await fetch(
+      `${fixture.ingress.base}/api/admin/profiles`,
+      { method: "POST", body: customForm },
+    );
+    assert.equal(customResponse.status, 201);
+    const customProfile = await json(customResponse);
+    assert.equal(customProfile.avatar, "custom");
+
+    const avatarResponse = await fetch(
+      `${fixture.ingress.base}/api/profiles/${customProfile.id}/avatar`,
+    );
+    assert.equal(avatarResponse.status, 200);
+    assert.match(avatarResponse.headers.get("content-type") || "", /webp/);
+    assert.match(
+      avatarResponse.headers.get("cache-control") || "",
+      /private, max-age=3600, must-revalidate/,
+    );
+
+    const patchForm = new FormData();
+    patchForm.append("avatar", "avatar_02.webp");
+    const patchResponse = await fetch(
+      `${fixture.ingress.base}/api/admin/profiles/${customProfile.id}`,
+      { method: "PATCH", body: patchForm },
+    );
+    assert.equal(patchResponse.status, 200);
+    assert.equal((await json(patchResponse)).avatar, "avatar_02.webp");
+    assert.equal(
+      (
+        await fetch(
+          `${fixture.ingress.base}/api/profiles/${customProfile.id}/avatar`,
+        )
+      ).status,
+      404,
+    );
+
+    const invalidForm = new FormData();
+    invalidForm.append(
+      "avatarFile",
+      new Blob(["not-a-webp"], { type: "image/png" }),
+      "avatar.png",
+    );
+    const invalidResponse = await fetch(
+      `${fixture.ingress.base}/api/admin/profiles/${systemProfile.id}`,
+      { method: "PATCH", body: invalidForm },
+    );
+    assert.equal(invalidResponse.status, 400);
+
+    const traversalResponse = await fetch(
+      `${fixture.ingress.base}/api/avatars/%2e%2e%2Favatar_02.webp`,
+    );
+    assert.equal(traversalResponse.status, 404);
+
+    const traversalDelete = await fetch(
+      `${fixture.ingress.base}/api/admin/avatars/..%2Fserver.js`,
+      { method: "DELETE" },
+    );
+    assert.equal(traversalDelete.status, 400);
+
+    const deleteResponse = await fetch(
+      `${fixture.ingress.base}/api/admin/avatars/avatar_02.webp`,
+      { method: "DELETE" },
+    );
+    assert.equal(deleteResponse.status, 204);
+    assert.equal(
+      (await fetch(`${fixture.ingress.base}/api/avatars/avatar_02.webp`))
+        .status,
+      404,
+    );
+
+    for (let index = 0; index < 301; index += 1) {
+      await fetch(`${fixture.ingress.base}/api/avatars`);
+    }
+    const limitedResponse = await fetch(`${fixture.ingress.base}/api/avatars`);
+    assert.equal(limitedResponse.status, 429);
   } finally {
     await fixture.ingress.close();
     await fixture.external.close();
@@ -1002,6 +1240,79 @@ test("library uses breadcrumb navigation and ordered sections", () => {
   assert.ok(recentIndex > platformsIndex);
 });
 
+test("new profile form uses a random default color", () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), "public", "app.js"),
+    "utf8",
+  );
+  assert.match(source, /function randomProfileColor/);
+  assert.match(source, /const defaultProfileColor = randomProfileColor\(\)/);
+  assert.match(
+    source,
+    /\$\{t\("color"\)\}<input name="color" type="color" value="\$\{defaultProfileColor\}"/,
+  );
+});
+
+test("profile editor edits name, color, and avatar", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const source = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");
+
+  assert.match(source, /id="edit-profile-name"/);
+  assert.match(source, /id="edit-profile-color"/);
+  assert.match(source, /form\.append\("name", editName\)/);
+  assert.match(source, /form\.append\("color", editColor\)/);
+  assert.match(source, /\$\{t\("edit"\)\}/);
+  assert.match(source, /\$\{t\("save"\)\}/);
+  assert.match(source, /profile-form-fields/);
+  assert.match(source, /profile-avatar-fields/);
+  assert.doesNotMatch(source, /\$\{t\("changeProfileImage"\)\}/);
+  assert.doesNotMatch(source, /\$\{t\("saveAvatar"\)\}/);
+});
+
+test("profile color field is square and aligned", () => {
+  const styles = fs.readFileSync(
+    path.join(process.cwd(), "public", "styles.css"),
+    "utf8",
+  );
+  assert.match(
+    styles,
+    /\.profile-form-fields\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*48px;/,
+  );
+  assert.match(
+    styles,
+    /\.profile-form-fields label:first-child input\s*\{[\s\S]*width:\s*100%/,
+  );
+  assert.match(
+    styles,
+    /\.profile-form-fields input\[type="color"\]\s*\{[\s\S]*width:\s*48px;[\s\S]*height:\s*48px;/,
+  );
+  assert.match(
+    styles,
+    /\.profile-form-fields input\[type="color"\]::-webkit-color-swatch\s*\{[\s\S]*border-radius:\s*8px;/,
+  );
+  assert.match(styles, /\.profile-form-actions\s*\{[\s\S]*margin-top:\s*1rem;/);
+  assert.match(styles, /\.profile-edit-actions\s*\{[\s\S]*margin-top:\s*1rem;/);
+});
+
+test("profile, game, and platform cards use Liquid Glass styling", () => {
+  const styles = fs.readFileSync(
+    path.join(process.cwd(), "public", "styles.css"),
+    "utf8",
+  );
+  assert.match(styles, /@keyframes liquid-orb/);
+  assert.match(styles, /backdrop-filter:\s*blur\(24px\)\s*saturate\(180%\)/);
+  assert.match(
+    styles,
+    /-webkit-backdrop-filter:\s*blur\(24px\)\s*saturate\(180%\)/,
+  );
+  assert.match(
+    styles,
+    /\.profile-card::before,[\s\S]*\.game-card::before,[\s\S]*\.platform-card::before/,
+  );
+  assert.match(styles, /transform:\s*scale\(0\.98\)/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
 test("changing profile resets the selected library platform", () => {
   const publicDirectory = path.join(process.cwd(), "public");
   const source = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");
@@ -1010,6 +1321,52 @@ test("changing profile resets the selected library platform", () => {
     source,
     /async function selectProfile[\s\S]*?rememberCurrentViewScroll\("profiles"\);\s*state\.libraryPlatform = null;/,
   );
+});
+
+test("profile images support system avatars and custom WebP uploads", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const appSource = fs.readFileSync(
+    path.join(publicDirectory, "app.js"),
+    "utf8",
+  );
+  const serverSource = fs.readFileSync(
+    path.join(process.cwd(), "app", "server.js"),
+    "utf8",
+  );
+  const storageSource = fs.readFileSync(
+    path.join(process.cwd(), "app", "storage.js"),
+    "utf8",
+  );
+  const swSource = fs.readFileSync(path.join(publicDirectory, "sw.js"), "utf8");
+  const stylesSource = fs.readFileSync(
+    path.join(publicDirectory, "styles.css"),
+    "utf8",
+  );
+
+  assert.match(appSource, /profileAvatarMarkup/);
+  assert.match(appSource, /\/api\/avatars\/\$\{avatar\}/);
+  assert.match(appSource, /convertProfileAvatarToWebp/);
+  assert.match(appSource, /canvas\.width = 345/);
+  assert.match(appSource, /canvas\.height = 345/);
+  assert.match(appSource, /"image\/webp"/);
+  assert.match(serverSource, /avatarUpload\.single\("avatarFile"\)/);
+  assert.match(serverSource, /isWebpBuffer/);
+  assert.match(serverSource, /\/api\/profiles\/:profileId\/avatar/);
+  assert.match(serverSource, /\/api\/admin\/avatars/);
+  assert.match(serverSource, /avatars[\\/"',\]\s]+system/);
+  assert.match(serverSource, /normalizeProfileAvatar[\s\S]*🎮/);
+  assert.match(storageSource, /"avatars\/system"/);
+  assert.match(storageSource, /"avatars\/custom"/);
+  assert.match(
+    stylesSource,
+    /grid-template-columns:\s*repeat\(auto-fill,\s*88px\)/,
+  );
+  assert.match(
+    stylesSource,
+    /\.system-avatar-admin-card img\s*\{[\s\S]*width:\s*72px/,
+  );
+  assert.doesNotMatch(appSource, /public\/avatars|\.\/avatars\//);
+  assert.doesNotMatch(swSource, /avatars\/avatar_/);
 });
 
 test("library navigation preserves scroll positions per view", () => {

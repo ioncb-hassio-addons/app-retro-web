@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export function ensureStorage(dataPath) {
   for (const directory of [
@@ -8,6 +9,8 @@ export function ensureStorage(dataPath) {
     "bios",
     "covers",
     "saves",
+    "avatars/system",
+    "avatars/custom",
     "profiles",
     "temp",
   ]) {
@@ -15,6 +18,36 @@ export function ensureStorage(dataPath) {
       recursive: true,
       mode: 0o700,
     });
+  }
+  seedDefaultSystemAvatars(dataPath);
+}
+
+export function seedDefaultSystemAvatars(dataPath) {
+  const systemDirectory = path.join(dataPath, "avatars", "system");
+  fs.mkdirSync(systemDirectory, { recursive: true, mode: 0o700 });
+  const existingAvatars = fs
+    .readdirSync(systemDirectory, { withFileTypes: true })
+    .filter(
+      (entry) => entry.isFile() && /^avatar_\d{2}\.webp$/i.test(entry.name),
+    );
+  if (existingAvatars.length > 0) return;
+
+  const appRoot = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+  );
+  const defaultsDirectory = path.join(appRoot, "app", "default-avatars");
+  if (!fs.existsSync(defaultsDirectory)) return;
+
+  for (const entry of fs
+    .readdirSync(defaultsDirectory, { withFileTypes: true })
+    .filter((item) => item.isFile() && /^avatar_\d{2}\.webp$/i.test(item.name))
+    .sort((left, right) => left.name.localeCompare(right.name))) {
+    fs.copyFileSync(
+      path.join(defaultsDirectory, entry.name),
+      path.join(systemDirectory, entry.name),
+      fs.constants.COPYFILE_EXCL,
+    );
   }
 }
 
