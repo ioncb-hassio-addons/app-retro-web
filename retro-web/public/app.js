@@ -369,7 +369,6 @@ function toolbarIcon(name) {
   };
   return icons[name] || "";
 }
-
 function platformLogoUrl(platform) {
   const logos = {
     arcade: "arcade",

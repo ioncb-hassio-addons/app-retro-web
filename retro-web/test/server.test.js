@@ -1409,17 +1409,11 @@ test("login view does not render an empty topbar", () => {
     /\.login-card\s*\{[\s\S]*width:\s*min\(440px,\s*100%\);[\s\S]*margin:\s*0;/,
   );
 });
-
 test("profile, game, and platform cards use Liquid Glass styling", () => {
   const styles = fs.readFileSync(
     path.join(process.cwd(), "public", "styles.css"),
     "utf8",
   );
-  assert.match(
-    styles,
-    /circle at 10% 10%[\s\S]*circle at 90% 0%[\s\S]*#070912/,
-  );
-  assert.doesNotMatch(styles, /liquid-orb|rgba\(168, 85, 247/);
   assert.match(styles, /backdrop-filter:\s*blur\(24px\)\s*saturate\(180%\)/);
   assert.match(
     styles,
@@ -1458,7 +1452,6 @@ test("profile, game, and platform images block drag without disabling text selec
   );
   assert.match(appSource, /draggable="false"/);
 });
-
 test("changing profile resets the selected library platform", () => {
   const publicDirectory = path.join(process.cwd(), "public");
   const source = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");

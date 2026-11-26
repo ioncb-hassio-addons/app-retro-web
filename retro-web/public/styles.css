@@ -25,18 +25,70 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
+  isolation: isolate;
   background:
     radial-gradient(
-      circle at 10% 10%,
-      rgba(91, 141, 239, 0.22),
+      circle at 18% 18%,
+      rgba(76, 132, 255, 0.82),
+      transparent 34rem
+    ),
+    radial-gradient(
+      circle at 82% 12%,
+      rgba(168, 85, 247, 0.72),
       transparent 32rem
     ),
     radial-gradient(
-      circle at 90% 0%,
-      rgba(255, 59, 107, 0.18),
-      transparent 28rem
+      circle at 72% 82%,
+      rgba(255, 59, 107, 0.58),
+      transparent 34rem
     ),
-    #070912;
+    radial-gradient(
+      circle at 16% 88%,
+      rgba(245, 158, 11, 0.38),
+      transparent 30rem
+    ),
+    linear-gradient(145deg, #081a3d 0%, #24205c 48%, #5a173c 100%);
+  background-attachment: fixed;
+}
+
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  width: 36rem;
+  height: 36rem;
+  border-radius: 50%;
+  filter: blur(38px);
+  opacity: 0.34;
+  pointer-events: none;
+  animation: liquid-orb 24s ease-in-out infinite alternate;
+}
+
+body::before {
+  top: -12rem;
+  left: -8rem;
+  background: linear-gradient(135deg, #63a4ff, #9c58ff);
+}
+
+body::after {
+  right: -10rem;
+  bottom: -14rem;
+  background: linear-gradient(135deg, #ff5aa5, #ffb55c);
+  animation-duration: 28s;
+  animation-direction: alternate-reverse;
+}
+
+@keyframes liquid-orb {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(12vw, 8vh, 0) scale(1.08);
+  }
+  100% {
+    transform: translate3d(-4vw, 16vh, 0) scale(0.96);
+  }
 }
 
 button,
