@@ -220,6 +220,17 @@ test("profile avatars support system selection and custom WebP uploads", async (
     );
     assert.equal(invalidResponse.status, 400);
 
+    const traversalResponse = await fetch(
+      `${fixture.ingress.base}/api/avatars/%2e%2e%2Favatar_02.webp`,
+    );
+    assert.equal(traversalResponse.status, 404);
+
+    const traversalDelete = await fetch(
+      `${fixture.ingress.base}/api/admin/avatars/..%2Fserver.js`,
+      { method: "DELETE" },
+    );
+    assert.equal(traversalDelete.status, 400);
+
     const deleteResponse = await fetch(
       `${fixture.ingress.base}/api/admin/avatars/avatar_02.webp`,
       { method: "DELETE" },
@@ -230,6 +241,12 @@ test("profile avatars support system selection and custom WebP uploads", async (
         .status,
       404,
     );
+
+    for (let index = 0; index < 31; index += 1) {
+      await fetch(`${fixture.ingress.base}/api/avatars`);
+    }
+    const limitedResponse = await fetch(`${fixture.ingress.base}/api/avatars`);
+    assert.equal(limitedResponse.status, 429);
   } finally {
     await fixture.ingress.close();
     await fixture.external.close();
@@ -1189,7 +1206,7 @@ test("profile images support system avatars and custom WebP uploads", () => {
   assert.match(appSource, /canvas\.width = 345/);
   assert.match(appSource, /canvas\.height = 345/);
   assert.match(appSource, /"image\/webp"/);
-  assert.match(serverSource, /upload\.single\("avatarFile"\)/);
+  assert.match(serverSource, /avatarUpload\.single\("avatarFile"\)/);
   assert.match(serverSource, /isWebpBuffer/);
   assert.match(serverSource, /\/api\/profiles\/:profileId\/avatar/);
   assert.match(serverSource, /\/api\/admin\/avatars/);
