@@ -87,6 +87,88 @@ test("external access is disabled until valid credentials are supplied", async (
   }
 });
 
+test("profile avatars support system selection and custom WebP uploads", async () => {
+  const fixture = await setup();
+  try {
+    const systemForm = new FormData();
+    systemForm.append("name", "System Avatar");
+    systemForm.append("avatar", "avatar_02.webp");
+    systemForm.append("color", "#5b8def");
+    systemForm.append("language", "es");
+    const systemResponse = await fetch(
+      `${fixture.ingress.base}/api/admin/profiles`,
+      { method: "POST", body: systemForm },
+    );
+    assert.equal(systemResponse.status, 201);
+    const systemProfile = await json(systemResponse);
+    assert.equal(systemProfile.avatar, "avatar_02.webp");
+
+    const customForm = new FormData();
+    customForm.append("name", "Custom Avatar");
+    customForm.append("avatar", "custom");
+    customForm.append("color", "#ff3b6b");
+    customForm.append("language", "en");
+    const avatarPath = path.join(
+      process.cwd(),
+      "public",
+      "avatars",
+      "avatar_02.webp",
+    );
+    customForm.append(
+      "avatarFile",
+      new Blob([fs.readFileSync(avatarPath)], { type: "image/webp" }),
+      "avatar.webp",
+    );
+    const customResponse = await fetch(
+      `${fixture.ingress.base}/api/admin/profiles`,
+      { method: "POST", body: customForm },
+    );
+    assert.equal(customResponse.status, 201);
+    const customProfile = await json(customResponse);
+    assert.equal(customProfile.avatar, "custom");
+
+    const avatarResponse = await fetch(
+      `${fixture.ingress.base}/api/profiles/${customProfile.id}/avatar`,
+    );
+    assert.equal(avatarResponse.status, 200);
+    assert.match(avatarResponse.headers.get("content-type") || "", /webp/);
+
+    const patchForm = new FormData();
+    patchForm.append("avatar", "avatar_02.webp");
+    const patchResponse = await fetch(
+      `${fixture.ingress.base}/api/admin/profiles/${customProfile.id}`,
+      { method: "PATCH", body: patchForm },
+    );
+    assert.equal(patchResponse.status, 200);
+    assert.equal((await json(patchResponse)).avatar, "avatar_02.webp");
+    assert.equal(
+      (
+        await fetch(
+          `${fixture.ingress.base}/api/profiles/${customProfile.id}/avatar`,
+        )
+      ).status,
+      404,
+    );
+
+    const invalidForm = new FormData();
+    invalidForm.append(
+      "avatarFile",
+      new Blob(["not-a-webp"], { type: "image/png" }),
+      "avatar.png",
+    );
+    const invalidResponse = await fetch(
+      `${fixture.ingress.base}/api/admin/profiles/${systemProfile.id}`,
+      { method: "PATCH", body: invalidForm },
+    );
+    assert.equal(invalidResponse.status, 400);
+  } finally {
+    await fixture.ingress.close();
+    await fixture.external.close();
+    fixture.db.close();
+    fs.rmSync(fixture.dataPath, { recursive: true, force: true });
+  }
+});
+
 test("ROM uploads, BIOS uploads, and profile saves are isolated", async () => {
   const fixture = await setup();
   try {
@@ -1010,6 +1092,40 @@ test("changing profile resets the selected library platform", () => {
     source,
     /async function selectProfile[\s\S]*?rememberCurrentViewScroll\("profiles"\);\s*state\.libraryPlatform = null;/,
   );
+});
+
+test("profile images support system avatars and custom WebP uploads", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const appSource = fs.readFileSync(
+    path.join(publicDirectory, "app.js"),
+    "utf8",
+  );
+  const serverSource = fs.readFileSync(
+    path.join(process.cwd(), "app", "server.js"),
+    "utf8",
+  );
+  const storageSource = fs.readFileSync(
+    path.join(process.cwd(), "app", "storage.js"),
+    "utf8",
+  );
+  const swSource = fs.readFileSync(path.join(publicDirectory, "sw.js"), "utf8");
+  const avatars = fs
+    .readdirSync(path.join(publicDirectory, "avatars"))
+    .filter((filename) => /^avatar_\d{2}\.webp$/i.test(filename))
+    .sort();
+
+  assert.ok(avatars.includes("avatar_02.webp"));
+  assert.match(appSource, /profileAvatarMarkup/);
+  assert.match(appSource, /convertProfileAvatarToWebp/);
+  assert.match(appSource, /canvas\.width = 345/);
+  assert.match(appSource, /canvas\.height = 345/);
+  assert.match(appSource, /"image\/webp"/);
+  assert.match(serverSource, /upload\.single\("avatarFile"\)/);
+  assert.match(serverSource, /isWebpBuffer/);
+  assert.match(serverSource, /\/api\/profiles\/:profileId\/avatar/);
+  assert.match(serverSource, /normalizeProfileAvatar[\s\S]*🎮/);
+  assert.match(storageSource, /"avatars"/);
+  assert.match(swSource, /avatars\/avatar_02\.webp/);
 });
 
 test("library navigation preserves scroll positions per view", () => {

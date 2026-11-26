@@ -122,5 +122,14 @@
   "reindexRunning": "Indexing is already running",
   "reindexStatus": "Index status",
   "reindexFiles": "{newFiles} new, {changedFiles} changed, {errors} errors",
-  "reindexNever": "Never run"
+  "reindexNever": "Never run",
+  "systemAvatars": "System avatars",
+  "uploadCustomAvatar": "Upload custom image",
+  "customAvatar": "Custom avatar",
+  "defaultAvatar": "Default avatar",
+  "profileImage": "Profile image",
+  "changeProfileImage": "Change image",
+  "saveAvatar": "Save image",
+  "profileUpdated": "Profile updated",
+  "avatarImageRequired": "Select a valid image"
 }

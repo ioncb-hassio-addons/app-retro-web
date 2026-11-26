@@ -33,6 +33,10 @@ const state = {
   autoplaySaveSlot: 1,
   screen: "profiles",
   scrollPositions: new Map(),
+  systemAvatars: [],
+  pendingProfileAvatar: "🎮",
+  pendingProfileAvatarFile: null,
+  pendingProfileAvatarPreviewUrl: null,
 };
 
 function getViewKey() {
@@ -101,6 +105,226 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function profileAvatarMarkup(profile, className = "profile-avatar") {
+  if (profile?.avatar === "custom") {
+    return `<span class="${className}"><img src="${escapeHtml(`./api/profiles/${profile.id}/avatar`)}" alt="${escapeHtml(profile.name)}" /></span>`;
+  }
+  if (/^avatar_\d{2}\.webp$/i.test(profile?.avatar || "")) {
+    return `<span class="${className}"><img src="${escapeHtml(`./avatars/${profile.avatar}`)}" alt="${escapeHtml(profile.name)}" /></span>`;
+  }
+  return `<span class="${className}">${escapeHtml(profile?.avatar || "🎮")}</span>`;
+}
+
+async function loadSystemAvatars() {
+  try {
+    state.systemAvatars = await api("./api/avatars");
+  } catch (error) {
+    state.systemAvatars = [];
+    console.warn("[Retro Web] Could not load system avatars", error);
+  }
+}
+
+async function convertProfileAvatarToWebp(file) {
+  if (!file?.type?.startsWith("image/")) {
+    throw new Error(t("avatarImageRequired"));
+  }
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error(t("avatarImageRequired")));
+      element.src = objectUrl;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = 345;
+    canvas.height = 345;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error(t("avatarImageRequired"));
+    const side = Math.min(image.naturalWidth, image.naturalHeight);
+    const sourceX = (image.naturalWidth - side) / 2;
+    const sourceY = (image.naturalHeight - side) / 2;
+    context.drawImage(image, sourceX, sourceY, side, side, 0, 0, 345, 345);
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (result) =>
+          result
+            ? resolve(result)
+            : reject(new Error(t("avatarImageRequired"))),
+        "image/webp",
+        0.92,
+      );
+    });
+    return new File([blob], "avatar.webp", { type: "image/webp" });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function systemAvatarOptions(selectedAvatar, onSelect) {
+  return `
+    <div class="avatar-picker">
+      <button type="button" class="avatar-option${selectedAvatar === "🎮" ? " selected" : ""}" data-avatar-value="🎮" aria-label="${escapeHtml(t("defaultAvatar"))}">
+        <span>🎮</span>
+      </button>
+      ${state.systemAvatars
+        .map(
+          (avatar) => `
+            <button type="button" class="avatar-option${selectedAvatar === avatar ? " selected" : ""}" data-avatar-value="${escapeHtml(avatar)}" aria-label="${escapeHtml(avatar)}">
+              <img src="${escapeHtml(`./avatars/${avatar}`)}" alt="" />
+            </button>`,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function bindProfileAvatarPicker(containerId, initialAvatar, onChange) {
+  const container = document.querySelector(containerId);
+  if (!container) return;
+  let selectedAvatar = initialAvatar || "🎮";
+  container.innerHTML = `
+    <strong>${t("systemAvatars")}</strong>
+    ${systemAvatarOptions(selectedAvatar)}
+    <label class="avatar-upload">
+      ${t("uploadCustomAvatar")}
+      <input type="file" accept="image/png,image/jpeg,image/webp" />
+    </label>
+    <div class="avatar-preview"></div>
+  `;
+  container.querySelectorAll("[data-avatar-value]").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedAvatar = button.dataset.avatarValue;
+      container.querySelectorAll("[data-avatar-value]").forEach((option) => {
+        option.classList.toggle(
+          "selected",
+          option.dataset.avatarValue === selectedAvatar,
+        );
+      });
+      const preview = container.querySelector(".avatar-preview");
+      if (preview) preview.innerHTML = "";
+      onChange?.({ avatar: selectedAvatar, file: null });
+    });
+  });
+  container
+    .querySelector("input[type=file]")
+    ?.addEventListener("change", async (event) => {
+      const file = event.currentTarget.files?.[0];
+      if (!file) return;
+      try {
+        const webpFile = await convertProfileAvatarToWebp(file);
+        selectedAvatar = "custom";
+        container.querySelectorAll("[data-avatar-value]").forEach((option) => {
+          option.classList.remove("selected");
+        });
+        const preview = container.querySelector(".avatar-preview");
+        if (preview) {
+          const objectUrl = URL.createObjectURL(webpFile);
+          preview.innerHTML = `<img src="${objectUrl}" alt="${escapeHtml(t("customAvatar"))}" />`;
+        }
+        onChange?.({ avatar: "custom", file: webpFile });
+      } catch (error) {
+        toast(error.message, true);
+        event.currentTarget.value = "";
+      }
+    });
+}
+
+async function openProfileAvatarDialog(profile) {
+  await loadSystemAvatars();
+  let selectedAvatar = profile.avatar || "🎮";
+  let selectedFile = null;
+  const dialog = document.createElement("dialog");
+  dialog.className = "retro-dialog profile-avatar-dialog";
+  dialog.innerHTML = `
+    <form method="dialog">
+      <h2>${escapeHtml(t("profileImage"))}</h2>
+      <p>${escapeHtml(profile.name)}</p>
+      <div id="existing-profile-avatar-picker">
+        <strong>${t("systemAvatars")}</strong>
+        ${systemAvatarOptions(selectedAvatar)}
+        <label class="avatar-upload">
+          ${t("uploadCustomAvatar")}
+          <input type="file" accept="image/png,image/jpeg,image/webp" />
+        </label>
+        <div class="avatar-preview">
+          ${
+            selectedAvatar === "custom"
+              ? `<img src="${escapeHtml(`./api/profiles/${profile.id}/avatar`)}" alt="${escapeHtml(t("customAvatar"))}" />`
+              : ""
+          }
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="secondary" value="cancel">${t("cancel")}</button>
+        <button class="primary" value="save">${t("saveAvatar")}</button>
+      </div>
+    </form>`;
+  const cleanup = () => dialog.remove();
+  dialog.addEventListener("close", async () => {
+    if (dialog.returnValue !== "save") {
+      cleanup();
+      return;
+    }
+    const form = new FormData();
+    form.append("avatar", selectedAvatar);
+    if (selectedFile) form.append("avatarFile", selectedFile);
+    try {
+      const updated = await api(`./api/admin/profiles/${profile.id}`, {
+        method: "PATCH",
+        body: form,
+      });
+      const existing = state.bootstrap.profiles.find(
+        (item) => item.id === profile.id,
+      );
+      if (existing) Object.assign(existing, updated);
+      toast(t("profileUpdated"));
+      cleanup();
+      renderAdmin();
+    } catch (error) {
+      toast(error.message, true);
+      cleanup();
+    }
+  });
+  dialog.querySelectorAll("[data-avatar-value]").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedAvatar = button.dataset.avatarValue;
+      selectedFile = null;
+      dialog.querySelectorAll("[data-avatar-value]").forEach((option) => {
+        option.classList.toggle(
+          "selected",
+          option.dataset.avatarValue === selectedAvatar,
+        );
+      });
+      const preview = dialog.querySelector(".avatar-preview");
+      if (preview) preview.innerHTML = "";
+    });
+  });
+  dialog
+    .querySelector("input[type=file]")
+    ?.addEventListener("change", async (event) => {
+      const file = event.currentTarget.files?.[0];
+      if (!file) return;
+      try {
+        selectedFile = await convertProfileAvatarToWebp(file);
+        selectedAvatar = "custom";
+        dialog.querySelectorAll("[data-avatar-value]").forEach((option) => {
+          option.classList.remove("selected");
+        });
+        const preview = dialog.querySelector(".avatar-preview");
+        if (preview) {
+          const objectUrl = URL.createObjectURL(selectedFile);
+          preview.innerHTML = `<img src="${objectUrl}" alt="${escapeHtml(t("customAvatar"))}" />`;
+        }
+      } catch (error) {
+        toast(error.message, true);
+        event.currentTarget.value = "";
+      }
+    });
+  document.body.appendChild(dialog);
+  dialog.showModal();
 }
 
 function platformLogoUrl(platform) {
@@ -211,7 +435,7 @@ function renderProfiles() {
             (profile) => `
               <button class="profile-card" data-profile="${escapeHtml(profile.id)}"
                 style="--profile-color:${escapeHtml(profile.color)}">
-                <span class="profile-avatar">${escapeHtml(profile.avatar)}</span>
+                ${profileAvatarMarkup(profile)}
                 <strong>${escapeHtml(profile.name)}</strong>
               </button>`,
           )
@@ -526,8 +750,11 @@ async function openAdmin() {
   renderAdmin();
 }
 
-function renderAdmin() {
+async function renderAdmin() {
   state.screen = "admin";
+  await loadSystemAvatars();
+  state.pendingProfileAvatar = "🎮";
+  state.pendingProfileAvatarFile = null;
   for (const url of coverBlobUrls) URL.revokeObjectURL(url);
   coverBlobUrls.clear();
   state.pendingCoverFile = null;
@@ -544,10 +771,25 @@ function renderAdmin() {
           <h2>${t("newProfile")}</h2>
           <form id="profile-form">
             <label>${t("name")}<input name="name" maxlength="40" required /></label>
-            <label>${t("avatar")}<input name="avatar" value="🎮" maxlength="12" /></label>
+            <div id="new-profile-avatar-picker"></div>
             <label>${t("color")}<input name="color" type="color" value="#5b8def" /></label>
             <button class="primary" type="submit">${t("createProfile")}</button>
           </form>
+        </section>
+        <section class="panel profile-admin-list-panel">
+          <h2>${t("profiles")}</h2>
+          <div class="profile-admin-list">
+            ${state.bootstrap.profiles
+              .map(
+                (profile) => `
+                  <div class="profile-admin-card" style="--profile-color:${escapeHtml(profile.color)}">
+                    ${profileAvatarMarkup(profile, "profile-avatar")}
+                    <strong>${escapeHtml(profile.name)}</strong>
+                    <button type="button" class="secondary" data-edit-profile-avatar="${escapeHtml(profile.id)}">${t("changeProfileImage")}</button>
+                  </div>`,
+              )
+              .join("")}
+          </div>
         </section>
         <section class="panel">
           <h2>${t("addRom")}</h2>
@@ -594,6 +836,22 @@ function renderAdmin() {
         </section>
       </div>
     </main>`;
+  bindProfileAvatarPicker(
+    "#new-profile-avatar-picker",
+    "🎮",
+    ({ avatar, file }) => {
+      state.pendingProfileAvatar = avatar;
+      state.pendingProfileAvatarFile = file;
+    },
+  );
+  document.querySelectorAll("[data-edit-profile-avatar]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const profile = state.bootstrap.profiles.find(
+        (item) => item.id === button.dataset.editProfileAvatar,
+      );
+      if (profile) void openProfileAvatarDialog(profile);
+    });
+  });
   document.querySelector("#back-button").addEventListener("click", async () => {
     rememberCurrentViewScroll("admin");
     state.bootstrap.profiles = await api("./api/profiles");
@@ -782,16 +1040,33 @@ async function searchCovers() {
 async function createProfile(event) {
   event.preventDefault();
   const formElement = event.currentTarget;
-  const values = Object.fromEntries(new FormData(formElement));
-  values.language = state.language;
+  const form = new FormData();
+  form.append("name", formElement.elements.name.value);
+  form.append("color", formElement.elements.color.value);
+  form.append("language", state.language);
+  form.append("avatar", state.pendingProfileAvatar || "🎮");
+  if (state.pendingProfileAvatarFile) {
+    form.append("avatarFile", state.pendingProfileAvatarFile);
+  }
   try {
-    await api("./api/admin/profiles", {
+    const profile = await api("./api/admin/profiles", {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(values),
+      body: form,
     });
+    state.bootstrap.profiles.push(profile);
     toast(t("profileCreated"));
     formElement.reset();
+    state.pendingProfileAvatar = "🎮";
+    state.pendingProfileAvatarFile = null;
+    bindProfileAvatarPicker(
+      "#new-profile-avatar-picker",
+      "🎮",
+      ({ avatar, file }) => {
+        state.pendingProfileAvatar = avatar;
+        state.pendingProfileAvatarFile = file;
+      },
+    );
+    await renderAdmin();
   } catch (error) {
     toast(error.message, true);
   }

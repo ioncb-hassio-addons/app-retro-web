@@ -1,5 +1,5 @@
-const CACHE_NAME = "retro-web-shell-v5";
-const CORE_CACHE_NAME = "retro-web-emulator-v5";
+const CACHE_NAME = "retro-web-shell-v6";
+const CORE_CACHE_NAME = "retro-web-emulator-v6";
 const SHELL = [
   "./",
   "./index.html",
@@ -7,6 +7,7 @@ const SHELL = [
   "./i18n.js",
   "./i18n/es.json",
   "./i18n/en.json",
+  "./avatars/avatar_02.webp",
   "./platforms/arcade.webp",
   "./platforms/gba.webp",
   "./platforms/gbc.webp",

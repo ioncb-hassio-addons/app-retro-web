@@ -8,6 +8,7 @@ export function ensureStorage(dataPath) {
     "bios",
     "covers",
     "saves",
+    "avatars",
     "profiles",
     "temp",
   ]) {

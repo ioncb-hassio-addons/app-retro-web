@@ -122,5 +122,14 @@
   "reindexRunning": "La indexación ya está en ejecución",
   "reindexStatus": "Estado de indexación",
   "reindexFiles": "{newFiles} nuevos, {changedFiles} cambiados, {errors} errores",
-  "reindexNever": "Nunca se ha ejecutado"
+  "reindexNever": "Nunca se ha ejecutado",
+  "systemAvatars": "Avatares del sistema",
+  "uploadCustomAvatar": "Subir imagen personalizada",
+  "customAvatar": "Avatar personalizado",
+  "defaultAvatar": "Avatar predeterminado",
+  "profileImage": "Imagen del perfil",
+  "changeProfileImage": "Cambiar imagen",
+  "saveAvatar": "Guardar imagen",
+  "profileUpdated": "Perfil actualizado",
+  "avatarImageRequired": "Selecciona una imagen válida"
 }
