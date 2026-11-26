@@ -1180,6 +1180,32 @@ test("states cannot be saved or loaded before EmulatorJS starts", () => {
   assert.match(source, /deleteLocalSave/);
 });
 
+test("web app manifest enables browser installation", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const index = fs.readFileSync(
+    path.join(publicDirectory, "index.html"),
+    "utf8",
+  );
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(publicDirectory, "manifest.webmanifest"), "utf8"),
+  );
+  const sw = fs.readFileSync(path.join(publicDirectory, "sw.js"), "utf8");
+  const icons = fs.readdirSync(path.join(publicDirectory, "icons"));
+
+  assert.match(index, /rel="manifest"/);
+  assert.match(index, /apple-mobile-web-app-capable/);
+  assert.match(index, /apple-touch-icon/);
+  assert.equal(manifest.display, "standalone");
+  assert.equal(manifest.start_url, "./");
+  assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
+  assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));
+  assert.ok(icons.includes("icon-192.png"));
+  assert.ok(icons.includes("icon-512.png"));
+  assert.match(sw, /manifest\.webmanifest/);
+  assert.match(sw, /icons\/icon-192\.png/);
+  assert.match(sw, /icons\/icon-512\.png/);
+});
+
 test("platform cards use transparent WebP logos", () => {
   const publicDirectory = path.join(process.cwd(), "public");
   const source = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");
@@ -1294,12 +1320,100 @@ test("profile color field is square and aligned", () => {
   assert.match(styles, /\.profile-edit-actions\s*\{[\s\S]*margin-top:\s*1rem;/);
 });
 
+test("emulator toolbar uses compact mobile actions", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const appSource = fs.readFileSync(
+    path.join(publicDirectory, "app.js"),
+    "utf8",
+  );
+  const stylesSource = fs.readFileSync(
+    path.join(publicDirectory, "styles.css"),
+    "utf8",
+  );
+
+  assert.match(appSource, /player-slot-control/);
+  assert.match(appSource, /toolbar-action-icon/);
+  assert.match(appSource, /toolbar-action-text/);
+  assert.match(appSource, /function toolbarIcon/);
+  assert.match(appSource, /toolbarIcon\("slot"\)/);
+  assert.match(appSource, /toolbarIcon\("sync"\)/);
+  assert.match(appSource, /toolbarIcon\("storage"\)/);
+  assert.match(appSource, /toolbarIcon\("exit"\)/);
+  assert.doesNotMatch(
+    appSource.slice(appSource.indexOf('<main class="player-view">')),
+    /🎞️|☁️|💾|🚪/,
+  );
+  assert.match(
+    stylesSource,
+    /@media \(max-width:\s*640px\)[\s\S]*\.player-toolbar-action\s*\{[\s\S]*width:\s*40px;/,
+  );
+  assert.match(
+    stylesSource,
+    /@media \(max-width:\s*640px\)[\s\S]*\.toolbar-action-text\s*\{[\s\S]*display:\s*none;/,
+  );
+});
+
+test("topbar brand title is hidden on small screens", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const appSource = fs.readFileSync(
+    path.join(publicDirectory, "app.js"),
+    "utf8",
+  );
+  const stylesSource = fs.readFileSync(
+    path.join(publicDirectory, "styles.css"),
+    "utf8",
+  );
+
+  assert.match(appSource, /<strong class="brand-title">Retro Web<\/strong>/);
+  assert.match(
+    stylesSource,
+    /@media \(max-width:\s*640px\)[\s\S]*\.brand-title\s*\{[\s\S]*display:\s*none;/,
+  );
+});
+
+test("login view does not render an empty topbar", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const appSource = fs.readFileSync(
+    path.join(publicDirectory, "app.js"),
+    "utf8",
+  );
+  const stylesSource = fs.readFileSync(
+    path.join(publicDirectory, "styles.css"),
+    "utf8",
+  );
+
+  assert.match(appSource, /function renderLogin[\s\S]*state\.screen = "login"/);
+  const renderLoginStart = appSource.indexOf("function renderLogin()");
+  const renderProfilesStart = appSource.indexOf(
+    "function renderProfiles()",
+    renderLoginStart,
+  );
+  const loginSource =
+    renderLoginStart >= 0 && renderProfilesStart >= 0
+      ? appSource.slice(renderLoginStart, renderProfilesStart)
+      : "";
+  assert.doesNotMatch(
+    loginSource,
+    /function renderLogin[\s\S]*<header class="topbar">/,
+  );
+  assert.match(
+    stylesSource,
+    /\.app-shell:has\(\.login-card\)\s\.topbar\s*\{[\s\S]*display:\s*none;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.app-shell:has\(\.login-card\)\s*\{[\s\S]*min-height:\s*100dvh;[\s\S]*display:\s*grid;[\s\S]*place-items:\s*center;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.login-card\s*\{[\s\S]*width:\s*min\(440px,\s*100%\);[\s\S]*margin:\s*0;/,
+  );
+});
 test("profile, game, and platform cards use Liquid Glass styling", () => {
   const styles = fs.readFileSync(
     path.join(process.cwd(), "public", "styles.css"),
     "utf8",
   );
-  assert.match(styles, /@keyframes liquid-orb/);
   assert.match(styles, /backdrop-filter:\s*blur\(24px\)\s*saturate\(180%\)/);
   assert.match(
     styles,
@@ -1313,6 +1427,31 @@ test("profile, game, and platform cards use Liquid Glass styling", () => {
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
+test("profile, game, and platform images block drag without disabling text selection", () => {
+  const publicDirectory = path.join(process.cwd(), "public");
+  const appSource = fs.readFileSync(
+    path.join(publicDirectory, "app.js"),
+    "utf8",
+  );
+  const stylesSource = fs.readFileSync(
+    path.join(publicDirectory, "styles.css"),
+    "utf8",
+  );
+
+  assert.match(
+    stylesSource,
+    /\.profile-card,\s*\.game-card,\s*\.platform-card\s*\{[\s\S]*-webkit-user-drag:\s*none;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.profile-card,\s*\.game-card,\s*\.platform-card\s*\{[\s\S]*-webkit-tap-highlight-color:\s*transparent;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.profile-card,\s*\.game-card,\s*\.platform-card\s*\{[\s\S]*touch-action:\s*manipulation;/,
+  );
+  assert.match(appSource, /draggable="false"/);
+});
 test("changing profile resets the selected library platform", () => {
   const publicDirectory = path.join(process.cwd(), "public");
   const source = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");

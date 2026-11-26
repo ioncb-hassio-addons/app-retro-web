@@ -125,10 +125,10 @@ function randomProfileColor() {
 
 function profileAvatarMarkup(profile, className = "profile-avatar") {
   if (profile?.avatar === "custom") {
-    return `<span class="${className}"><img src="${escapeHtml(`./api/profiles/${profile.id}/avatar`)}" alt="${escapeHtml(profile.name)}" /></span>`;
+    return `<span class="${className}"><img draggable="false" src="${escapeHtml(`./api/profiles/${profile.id}/avatar`)}" alt="${escapeHtml(profile.name)}" /></span>`;
   }
   if (/^avatar_\d{2}\.webp$/i.test(profile?.avatar || "")) {
-    return `<span class="${className}"><img src="${escapeHtml(`./api/avatars/${profile.avatar}`)}" alt="${escapeHtml(profile.name)}" /></span>`;
+    return `<span class="${className}"><img draggable="false" src="${escapeHtml(`./api/avatars/${profile.avatar}`)}" alt="${escapeHtml(profile.name)}" /></span>`;
   }
   return `<span class="${className}">${escapeHtml(profile?.avatar || "🎮")}</span>`;
 }
@@ -360,6 +360,15 @@ async function openProfileAvatarDialog(profile) {
   dialog.showModal();
 }
 
+function toolbarIcon(name) {
+  const icons = {
+    slot: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 9h10M7 13h6M17 13h.01"/></svg>`,
+    sync: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-4M4 4v5h5M4 13a8 8 0 0 0 14.9 4M20 20v-5h-5"/></svg>`,
+    storage: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>`,
+    exit: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H5v14h5M14 8l4 4-4 4M8 12h10"/></svg>`,
+  };
+  return icons[name] || "";
+}
 function platformLogoUrl(platform) {
   const logos = {
     arcade: "arcade",
@@ -419,6 +428,9 @@ function renderError(message) {
 }
 
 function renderLogin() {
+  state.screen = "login";
+  document.querySelectorAll(".topbar").forEach((toolbar) => toolbar.remove());
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   app.innerHTML = `
     <main class="login-card">
       <div class="brand"><span>🎮</span><strong>Retro Web</strong></div>
@@ -628,7 +640,7 @@ async function renderLibrary() {
     : [];
   app.innerHTML = `
     <header class="topbar">
-      <div class="brand"><span>🎮</span><strong>Retro Web</strong></div>
+      <div class="brand"><span>🎮</span><strong class="brand-title">Retro Web</strong></div>
       <div class="topbar-actions">
         ${languageSelector()}
         ${adminActions}
@@ -680,7 +692,7 @@ async function renderLibrary() {
                      .map(
                        ([platform, count]) => `
                      <button class="platform-card" data-platform="${escapeHtml(platform)}">
-                       <img class="platform-card-logo" src="${escapeHtml(platformLogoUrl(platform))}" alt="${escapeHtml(platformLabels.get(platform) || platform.toUpperCase())}" loading="lazy" />
+                       <img draggable="false" class="platform-card-logo" src="${escapeHtml(platformLogoUrl(platform))}" alt="${escapeHtml(platformLabels.get(platform) || platform.toUpperCase())}" loading="lazy" />
                        <div class="platform-card-info">
                          <strong>${escapeHtml(platformLabels.get(platform) || platform.toUpperCase())}</strong>
                          <span>${tf(count === 1 ? "gameCount" : "gamesCount", { count })}</span>
@@ -743,7 +755,7 @@ function gameCard(game) {
       <div class="cover">
         ${
           game.has_cover
-            ? `<img data-cover-game="${escapeHtml(game.id)}" alt="${escapeHtml(game.title)}" loading="lazy" hidden /><span class="cover-fallback">🕹️</span>`
+            ? `<img draggable="false" data-cover-game="${escapeHtml(game.id)}" alt="${escapeHtml(game.title)}" loading="lazy" hidden /><span class="cover-fallback">🕹️</span>`
             : '<span class="cover-fallback">🕹️</span>'
         }
       </div>
@@ -796,7 +808,7 @@ async function renderAdmin() {
   revokeCoverPreview();
   app.innerHTML = `
     <header class="topbar">
-      <div class="brand"><span>⚙️</span><strong>${t("administration")}</strong></div>
+      <div class="brand"><span>⚙️</span><strong class="brand-title">${t("administration")}</strong></div>
       <button class="secondary" id="back-button">${t("back")}</button>
     </header>
     <main class="content">
@@ -1260,12 +1272,22 @@ async function launchGame(gameId, restoreState = null) {
         <header class="player-toolbar">
           <strong>${escapeHtml(game.title)}</strong>
           <div class="row">
-            <label class="row">${t("slot")}
+            <label class="row player-slot-control" title="${escapeHtml(t("slot"))}">
+              <span class="toolbar-label" aria-hidden="true">${toolbarIcon("slot")}</span>
               <select id="save-slot">${[1, 2, 3, 4, 5].map((slot) => `<option>${slot}</option>`).join("")}</select>
             </label>
-            <button class="secondary" id="sync-saves">${t("syncSaves")}</button>
-            <button class="secondary" id="local-storage">${t("localStorage")}</button>
-            <button class="secondary" id="exit-player">${t("logout")}</button>
+            <button class="secondary player-toolbar-action" id="sync-saves" title="${escapeHtml(t("syncSaves"))}" aria-label="${escapeHtml(t("syncSaves"))}">
+              <span class="toolbar-action-icon" aria-hidden="true">${toolbarIcon("sync")}</span>
+              <span class="toolbar-action-text">${t("syncSaves")}</span>
+            </button>
+            <button class="secondary player-toolbar-action" id="local-storage" title="${escapeHtml(t("localStorage"))}" aria-label="${escapeHtml(t("localStorage"))}">
+              <span class="toolbar-action-icon" aria-hidden="true">${toolbarIcon("storage")}</span>
+              <span class="toolbar-action-text">${t("localStorage")}</span>
+            </button>
+            <button class="secondary player-toolbar-action" id="exit-player" title="${escapeHtml(t("logout"))}" aria-label="${escapeHtml(t("logout"))}">
+              <span class="toolbar-action-icon" aria-hidden="true">${toolbarIcon("exit")}</span>
+              <span class="toolbar-action-text">${t("logout")}</span>
+            </button>
           </div>
         </header>
         <div class="player-stage"><div id="player"></div></div>
