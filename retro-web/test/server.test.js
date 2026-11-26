@@ -1294,6 +1294,25 @@ test("profile color field is square and aligned", () => {
   assert.match(styles, /\.profile-edit-actions\s*\{[\s\S]*margin-top:\s*1rem;/);
 });
 
+test("profile, game, and platform cards use Liquid Glass styling", () => {
+  const styles = fs.readFileSync(
+    path.join(process.cwd(), "public", "styles.css"),
+    "utf8",
+  );
+  assert.match(styles, /@keyframes liquid-orb/);
+  assert.match(styles, /backdrop-filter:\s*blur\(24px\)\s*saturate\(180%\)/);
+  assert.match(
+    styles,
+    /-webkit-backdrop-filter:\s*blur\(24px\)\s*saturate\(180%\)/,
+  );
+  assert.match(
+    styles,
+    /\.profile-card::before,[\s\S]*\.game-card::before,[\s\S]*\.platform-card::before/,
+  );
+  assert.match(styles, /transform:\s*scale\(0\.98\)/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
 test("changing profile resets the selected library platform", () => {
   const publicDirectory = path.join(process.cwd(), "public");
   const source = fs.readFileSync(path.join(publicDirectory, "app.js"), "utf8");
